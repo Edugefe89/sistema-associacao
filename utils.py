@@ -7,11 +7,12 @@ import uuid
 import pytz
 import extra_streamlit_components as stx
 
-# --- GERENCIADOR DE COOKIES ---
+# --- GERENCIADOR DE COOKIES (SEM CACHE) ---
+# Importante: Não use @st.cache_resource aqui para evitar erro de Widget
 def get_cookie_manager():
     return stx.CookieManager()
 
-# --- CONEXÃO GOOGLE ---
+# --- CONEXÃO COM GOOGLE SHEETS ---
 def get_client_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -45,6 +46,7 @@ def buscar_status_paginas(site, letra):
         df = pd.DataFrame(dados)
         chave = f"{site} | {letra}".strip()
         if not df.empty and 'Chave' in df.columns:
+            # Converte para string e remove espaços para garantir o match
             res = df[df['Chave'].astype(str).str.strip() == chave]
             if not res.empty:
                 total = int(res.iloc[0]['Qtd_Paginas'])
@@ -78,6 +80,7 @@ def registrar_log(operador, site, letra, acao, total, novas):
         agora = datetime.now(fuso)
         
         tempo = 0
+        # Calcula segundos inteiros
         if acao != "INICIO" and 'ultimo_timestamp' in st.session_state:
             tempo = int((agora - st.session_state['ultimo_timestamp']).total_seconds())
         
@@ -99,16 +102,18 @@ def calcular_resumo_diario(usuario):
         
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
+        # Garante que Data_Hora é string antes de comparar
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
         if df.empty: return "00:00", 0
         
+        # Soma do Tempo
         seg = df['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
         
-        # Conta Páginas
+        # Conta Páginas (Conta quantos números tem separados por vírgula na última coluna)
         paginas = 0
-        col_pags = df.columns[-1] # Assume última coluna
+        col_pags = df.columns[-1] 
         for item in df[col_pags]:
             if str(item).strip() not in ["", "-"]:
                 paginas += len(str(item).split(','))
@@ -116,7 +121,7 @@ def calcular_resumo_diario(usuario):
         return f"{h:02d}h {m:02d}m", paginas
     except: return "Erro", 0
 
-# --- BARRA LATERAL PADRÃO ---
+# --- BARRA LATERAL PADRÃO (COM CORREÇÃO DE LOGOUT) ---
 def sidebar_padrao():
     if 'usuario_logado' not in st.session_state:
         return
@@ -125,16 +130,25 @@ def sidebar_padrao():
     with st.sidebar:
         st.write(f"👤 **{usuario}**")
         
-        # Logout Robusto
+        # Logout com Try/Except para evitar KeyError se o cookie já sumiu
         if st.button("Sair / Logout"):
-            cookie_manager = get_cookie_manager()
-            cookie_manager.delete("usuario_associacao")
+            try:
+                cookie_manager = get_cookie_manager()
+                cookie_manager.delete("usuario_associacao")
+            except KeyError:
+                pass # Se der erro porque a chave não existe, apenas segue o baile
+            except Exception as e:
+                print(f"Erro ao deletar cookie: {e}")
+
+            # Limpa toda a memória da sessão
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
+            
             st.rerun()
 
         st.divider()
         st.markdown("### 📊 Hoje")
+        
         if 'resumo_dia' not in st.session_state:
              st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
         
