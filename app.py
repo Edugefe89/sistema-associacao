@@ -17,7 +17,13 @@ def check_password():
         return True
 
     st.header("🔒 Login de Acesso")
-    usuarios_cadastrados = st.secrets["passwords"]
+    # Pega usuários do Segredos do Streamlit
+    try:
+        usuarios_cadastrados = st.secrets["passwords"]
+    except:
+        st.error("Erro: Senhas não configuradas nos Secrets.")
+        return False
+        
     lista_usuarios = ["Selecione seu usuário"] + list(usuarios_cadastrados.keys())
     
     user_input = st.selectbox("Usuário", lista_usuarios)
@@ -35,35 +41,54 @@ def check_password():
             st.warning("Selecione um usuário.")
     return False
 
-def conectar_google_sheets():
+# Função base de conexão
+def get_client_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Sistema_Associacao").worksheet("Logs")
-    return sheet
+    return gspread.authorize(creds)
 
+# --- NOVA FUNÇÃO: CARREGAR LISTA DE SITES (COM CACHE) ---
+@st.cache_data(ttl=3600) # Guarda na memória por 1 hora (3600 seg)
+def carregar_lista_sites():
+    try:
+        client = get_client_google()
+        # Abre a aba de cadastro
+        sheet = client.open("Sistema_Associacao").worksheet("cadastro_varreduras")
+        # Pega todos os dados
+        dados = sheet.get_all_records()
+        df = pd.DataFrame(dados)
+        
+        # Cria a lista formatada "Cliente - Concorrente"
+        if not df.empty and 'Cliente' in df.columns and 'Concorrente' in df.columns:
+            # Filtra linhas vazias
+            df = df[df['Cliente'] != '']
+            lista_formatada = (df['Cliente'] + " - " + df['Concorrente']).tolist()
+            return sorted(lista_formatada) # Retorna em ordem alfabética
+        else:
+            return ["Erro: Colunas Cliente/Concorrente não encontradas"]
+            
+    except Exception as e:
+        return [f"Erro ao carregar lista: {e}"]
+
+# Função de salvar log
 def registrar_log(operador, site, letra, acao, num_paginas=0):
     try:
-        sheet = conectar_google_sheets()
+        client = get_client_google()
+        sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
-        # Fuso Horário
         fuso_br = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso_br)
         
-        # --- CÁLCULO DO TEMPO DECORRIDO ---
-        tempo_decorrido = "00:00:00" # Padrão para o INICIO
+        tempo_decorrido = "00:00:00"
         
-        # Se não for INICIO, tenta calcular a diferença do último registro
         if acao != "INICIO" and 'ultimo_timestamp' in st.session_state:
             anterior = st.session_state['ultimo_timestamp']
             delta = agora - anterior
-            # Remove os milissegundos para ficar bonito (HH:MM:SS)
             tempo_decorrido = str(delta).split('.')[0]
         
-        # Atualiza o timestamp na memória para a próxima vez
-        st.session_state['ultimo_timestamp'] = agora
-        # ----------------------------------
+        if acao == "INICIO" or acao == "RETOMADA":
+             st.session_state['ultimo_timestamp'] = agora
 
         if 'id_sessao' not in st.session_state:
             st.session_state.id_sessao = str(uuid.uuid4())
@@ -76,7 +101,7 @@ def registrar_log(operador, site, letra, acao, num_paginas=0):
             acao,
             agora.strftime("%d/%m/%Y %H:%M:%S"),
             str(agora.timestamp()),
-            tempo_decorrido, # Nova Coluna de Tempo
+            tempo_decorrido,
             num_paginas
         ]
         
@@ -86,7 +111,7 @@ def registrar_log(operador, site, letra, acao, num_paginas=0):
         st.error(f"Erro ao salvar: {e}")
         return False
 
-# --- APP ---
+# --- APP PRINCIPAL ---
 
 if not check_password():
     st.stop()
@@ -98,15 +123,25 @@ with st.sidebar:
     if st.button("Sair"):
         st.session_state['password_correct'] = False
         st.rerun()
+    
+    st.divider()
+    st.markdown("### ⚙️ Admin")
+    # Botão para forçar atualização da lista de sites
+    if st.button("🔄 Atualizar Lista de Sites"):
+        carregar_lista_sites.clear() # Limpa o cache
+        st.rerun()
 
 st.title("🔗 Controle de Associação")
 
-SITES = ["Site A", "Site B", "Site C", "Site D"] 
+# --- CARREGA OS SITES DA PLANILHA ---
+with st.spinner("Carregando lista de sites..."):
+    SITES_DINAMICOS = carregar_lista_sites()
+
 LETRAS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 col1, col2 = st.columns(2)
 with col1:
-    site = st.selectbox("Site / Projeto", SITES)
+    site = st.selectbox("Site / Projeto", SITES_DINAMICOS)
 with col2:
     letra = st.selectbox("Letra / Lote", LETRAS)
 
@@ -122,7 +157,6 @@ col_btn1, col_btn2, col_btn3 = st.columns(3)
 # 1. INICIAR
 if st.session_state.status == "PARADO":
     if col_btn1.button("▶️ INICIAR", type="primary", use_container_width=True):
-        # Limpa o timestamp antigo para garantir que comece do zero
         if 'ultimo_timestamp' in st.session_state:
             del st.session_state['ultimo_timestamp']
             
@@ -132,7 +166,7 @@ if st.session_state.status == "PARADO":
 
 # 2. PAUSAR
 if st.session_state.status == "TRABALHANDO":
-    st.success(f"🟢 Trabalhando... (Relógio rodando)")
+    st.success(f"🟢 Trabalhando em: **{site}**")
     
     if col_btn2.button("⏸ PAUSAR", use_container_width=True):
         if registrar_log(usuario, site, letra, "PAUSA", num_paginas):
@@ -150,7 +184,7 @@ if st.session_state.status == "TRABALHANDO":
 
 # 3. RETOMAR
 if st.session_state.status == "PAUSADO":
-    st.warning("⏸ Tarefa Pausada (Relógio rodando no descanso)")
+    st.warning("⏸ Tarefa Pausada")
     if col_btn1.button("▶️ RETOMAR", type="primary", use_container_width=True):
         if registrar_log(usuario, site, letra, "RETOMADA", num_paginas):
             st.session_state.status = "TRABALHANDO"
