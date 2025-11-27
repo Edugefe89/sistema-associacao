@@ -213,24 +213,25 @@ elif st.session_state.status == "TRABALHANDO":
         if len(paginas_selecionadas_agora) == len(faltam):
             tudo_selecionado = True
     
+    # LÓGICA DO BOTÃO FINALIZAR (Só aparece se completou TUDO)
     if tudo_selecionado:
-        # Mostra botão Finalizar VERDE e GRANDE
         if b3.button("✅ FINALIZAR LETRA", type="primary", use_container_width=True):
             if registrar_log(usuario, site, letra, "FIM", total_pg, paginas_selecionadas_agora):
+                
+                # --- ATUALIZAÇÃO DO BANCO ---
                 if paginas_selecionadas_agora:
                     salvar_progresso(site, letra, total_pg, paginas_selecionadas_agora)
+                    
+                    # --- [CORREÇÃO AQUI] ---
+                    # Atualiza a memória visual IMEDIATAMENTE para a barra encher
+                    st.session_state.memoria_feitas = st.session_state.memoria_feitas + paginas_selecionadas_agora
+                
                 st.session_state.status = "PARADO"
-                if 'id_sessao' in st.session_state: del st.session_state['id_sessao']
-                st.balloons()
-                time.sleep(2)
-                st.rerun()
-    else:
-        # Se não selecionou tudo, mostra um aviso (Opcional, ou deixa vazio)
-        b3.markdown(f"<div style='text-align:center; color:gray; padding-top:10px;'>Selecione as {len(faltam)} pgs restantes para finalizar.</div>", unsafe_allow_html=True)
-
-elif st.session_state.status == "PAUSADO":
-    st.warning("⏸ Pausado")
-    if b1.button("▶️ RETOMAR", type="primary", use_container_width=True):
-        if registrar_log(usuario, site, letra, "RETOMADA", total_pg, []):
-            st.session_state.status = "TRABALHANDO"
-            st.rerun()
+                
+                # Remove o ID da sessão para criar um novo na próxima
+                if 'id_sessao' in st.session_state:
+                    del st.session_state['id_sessao']
+                
+                st.balloons() # Solta os balões
+                time.sleep(2) # Espera 2 segundinhos para curtir a vitória
+                st.rerun()    # Recarrega a tela (agora com a barra cheia)
