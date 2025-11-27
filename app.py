@@ -179,4 +179,56 @@ if paginas_db is not None:
     num_paginas_final = paginas_db
 else:
     st.warning("🆕 Letra nova detectada! Informe as páginas para salvar no histórico.")
-    num_paginas_final = st.number_input
+    num_paginas_final = st.number_input("Quantidade de Páginas:", min_value=1, step=1)
+
+st.divider()
+
+# --- BOTÕES DE AÇÃO ---
+
+if 'status' not in st.session_state:
+    st.session_state.status = "PARADO"
+
+c1, c2, c3 = st.columns(3)
+
+# 1. INICIAR
+if st.session_state.status == "PARADO":
+    if c1.button("▶️ INICIAR", type="primary", use_container_width=True):
+        
+        # Se for novo, salva a página agora
+        if paginas_db is None:
+            salvar_nova_pagina(site_selecionado, letra_selecionada, num_paginas_final)
+            st.session_state.paginas_memoria['valor'] = num_paginas_final
+            
+        # Limpa timestamp antigo por segurança
+        if 'ultimo_timestamp' in st.session_state:
+            del st.session_state['ultimo_timestamp']
+            
+        if registrar_log(usuario, site_selecionado, letra_selecionada, "INICIO", num_paginas_final):
+            st.session_state.status = "TRABALHANDO"
+            st.rerun()
+
+# 2. PAUSAR
+elif st.session_state.status == "TRABALHANDO":
+    st.success(f"🔨 Trabalhando em **{site_selecionado} - Letra {letra_selecionada}**")
+    
+    if c2.button("⏸ PAUSAR", use_container_width=True):
+        if registrar_log(usuario, site_selecionado, letra_selecionada, "PAUSA", num_paginas_final):
+            st.session_state.status = "PAUSADO"
+            st.rerun()
+    
+    if c3.button("✅ FINALIZAR", type="primary", use_container_width=True):
+        if registrar_log(usuario, site_selecionado, letra_selecionada, "FIM", num_paginas_final):
+            st.session_state.status = "PARADO"
+            if 'id_sessao' in st.session_state:
+                del st.session_state['id_sessao']
+            st.balloons()
+            time.sleep(2)
+            st.rerun()
+
+# 3. RETOMAR
+elif st.session_state.status == "PAUSADO":
+    st.warning("⏸ Pausado")
+    if c1.button("▶️ RETOMAR", type="primary", use_container_width=True):
+        if registrar_log(usuario, site_selecionado, letra_selecionada, "RETOMADA", num_paginas_final):
+            st.session_state.status = "TRABALHANDO"
+            st.rerun()
