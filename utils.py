@@ -8,7 +8,6 @@ import pytz
 import extra_streamlit_components as stx
 
 # --- GERENCIADOR DE COOKIES ---
-@st.cache_resource
 def get_cookie_manager():
     return stx.CookieManager()
 
