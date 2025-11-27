@@ -9,7 +9,7 @@ import pytz
 
 st.set_page_config(page_title="Sistema de Associação", page_icon="🔗")
 
-# --- FUNÇÕES DE CONEXÃO E CACHE ---
+# --- CONEXÃO E CACHE ---
 
 def get_client_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -32,29 +32,27 @@ def carregar_lista_sites():
     except:
         return ["Erro de Conexão"]
 
-# --- NOVA FUNÇÃO: MEMÓRIA DE PÁGINAS ---
 def buscar_memoria_paginas(site, letra):
-    """Busca se já existe página cadastrada para esse par Site-Letra"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
-        # Pega todos os registros
         dados = sheet.get_all_records()
         df = pd.DataFrame(dados)
-        
-        chave_busca = f"{site} | {letra}"
+        # Ajuste para garantir que leia como string e trate espaços
+        chave_busca = f"{site} | {letra}".strip()
         
         if not df.empty and 'Chave' in df.columns:
-            # Filtra
-            resultado = df[df['Chave'] == chave_busca]
+            # Cria coluna temporária limpa para comparar
+            df['Chave_Limpa'] = df['Chave'].astype(str).str.strip()
+            resultado = df[df['Chave_Limpa'] == chave_busca]
+            
             if not resultado.empty:
-                return int(resultado.iloc[0]['Qtd_Paginas']) # Retorna o número encontrado
-        return None # Não achou nada
+                return int(resultado.iloc[0]['Qtd_Paginas'])
+        return None
     except:
         return None
 
 def salvar_nova_pagina(site, letra, qtd):
-    """Salva a nova quantidade para o futuro"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
@@ -87,7 +85,7 @@ def check_password():
             st.error("Senha incorreta.")
     return False
 
-# --- REGISTRO DE LOGS ---
+# --- REGISTRO DE LOGS (ATUALIZADO PARA SEGUNDOS) ---
 def registrar_log(operador, site, letra, acao, num_paginas=0):
     try:
         client = get_client_google()
@@ -95,10 +93,13 @@ def registrar_log(operador, site, letra, acao, num_paginas=0):
         fuso_br = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso_br)
         
-        tempo_decorrido = "00:00:00"
+        # MUDANÇA AQUI: Padrão agora é 0 (número) e não texto
+        tempo_decorrido_segundos = 0
+        
         if acao != "INICIO" and 'ultimo_timestamp' in st.session_state:
             delta = agora - st.session_state['ultimo_timestamp']
-            tempo_decorrido = str(delta).split('.')[0]
+            # Pega o total de segundos inteiro
+            tempo_decorrido_segundos = int(delta.total_seconds())
         
         if acao in ["INICIO", "RETOMADA"]:
              st.session_state['ultimo_timestamp'] = agora
@@ -106,9 +107,17 @@ def registrar_log(operador, site, letra, acao, num_paginas=0):
         if 'id_sessao' not in st.session_state:
             st.session_state.id_sessao = str(uuid.uuid4())
 
-        nova_linha = [st.session_state.id_sessao, operador, site, letra, acao, 
-                      agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
-                      tempo_decorrido, num_paginas]
+        nova_linha = [
+            st.session_state.id_sessao, 
+            operador, 
+            site, 
+            letra, 
+            acao, 
+            agora.strftime("%d/%m/%Y %H:%M:%S"), 
+            str(agora.timestamp()), 
+            tempo_decorrido_segundos, # Agora salva apenas o número (ex: 3600)
+            num_paginas
+        ]
         sheet.append_row(nova_linha)
         return True
     except Exception as e:
@@ -144,35 +153,28 @@ with col2:
 
 st.divider()
 
-# --- LÓGICA INTELIGENTE DE PÁGINAS ---
-# 1. Verifica se já existe na memória
+# --- LÓGICA DE PÁGINAS ---
 if 'paginas_memoria' not in st.session_state:
     st.session_state.paginas_memoria = {}
 
-# Chave única para controle local
 chave_atual = f"{site_selecionado}_{letra_selecionada}"
 
-# Se mudou a seleção, busca no banco
 if st.session_state.get('ultima_selecao') != chave_atual:
-    with st.spinner("Verificando histórico de páginas..."):
+    with st.spinner("Verificando histórico..."):
         paginas_encontradas = buscar_memoria_paginas(site_selecionado, letra_selecionada)
         st.session_state.paginas_memoria['valor'] = paginas_encontradas
         st.session_state['ultima_selecao'] = chave_atual
 
-# 2. Exibe o campo dependendo do resultado
 paginas_db = st.session_state.paginas_memoria.get('valor')
 
 if paginas_db is not None:
-    # SE JÁ EXISTE: Mostra travado (ou apenas informativo)
-    st.info(f"📚 Esta letra já foi cadastrada com **{paginas_db} páginas**.")
+    st.info(f"📚 Letra já cadastrada com **{paginas_db} páginas**.")
     num_paginas_final = paginas_db
 else:
-    # SE É NOVO: Pede para digitar
-    st.warning("🆕 Letra nova detectada! Informe as páginas para salvar no histórico.")
+    st.warning("🆕 Letra nova! Informe as páginas.")
     num_paginas_final = st.number_input("Quantidade de Páginas:", min_value=1, step=1)
 
-
-# --- BOTÕES DE AÇÃO ---
+# --- BOTÕES ---
 st.divider()
 
 if 'status' not in st.session_state:
@@ -182,11 +184,8 @@ c1, c2, c3 = st.columns(3)
 
 if st.session_state.status == "PARADO":
     if c1.button("▶️ INICIAR", type="primary", use_container_width=True):
-        
-        # SALVA A MEMÓRIA SE FOR NOVO
         if paginas_db is None:
             salvar_nova_pagina(site_selecionado, letra_selecionada, num_paginas_final)
-            # Atualiza o estado local para não pedir de novo
             st.session_state.paginas_memoria['valor'] = num_paginas_final
             
         if 'ultimo_timestamp' in st.session_state: del st.session_state['ultimo_timestamp']
