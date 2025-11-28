@@ -26,11 +26,9 @@ def get_client_google():
         st.error(f"Erro de Conexão Google: {e}")
         return None
 
-# --- 3. FUNÇÕES DE DADOS (COM CACHE) ---
+# --- 3. FUNÇÕES DE DADOS ---
 @st.cache_data(ttl=300)
 def carregar_lista_sites():
-    # Não usamos spinner aqui dentro pois o cache já bloqueia, 
-    # mas vamos colocar spinner na chamada da função lá embaixo.
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("cadastro_varreduras")
@@ -65,18 +63,13 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
         
-        # Busca o histórico antigo
         _, ja_feitas = buscar_status_paginas(site, letra)
         
-        # Junta tudo
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
         
-        # --- FAXINA DE DADOS (Correção do erro 2003) ---
-        # Mantém apenas páginas que são menores ou iguais ao total
-        # Ex: Se Total=10, ele apaga o 2003 da lista automaticamente
+        # FAXINA DE DADOS (Remove páginas maiores que o total, ex: 2003)
         lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
         
-        # Transforma em texto
         texto_para_salvar = ", ".join(map(str, lista_limpa))
         
         chave_busca = f"{site} | {letra}".strip()
@@ -87,9 +80,7 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas):
             sheet.update_cell(cell.row, 4, total_paginas)
         else:
             sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar])
-            
-    except Exception as e:
-        st.error(f"Erro ao salvar progresso: {e}")
+    except: pass
 
 def registrar_log(operador, site, letra, acao, total, novas):
     try:
@@ -116,25 +107,35 @@ def calcular_resumo_diario(usuario):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         df = pd.DataFrame(sheet.get_all_records())
-        if df.empty: return "00:00", 0
+        if df.empty: return "0h 0m", 0
         
+        # Filtra Usuário
         df = df[df['Operador'] == usuario]
+        
+        # Filtra Hoje
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
-        if df.empty: return "00:00", 0
+        if df.empty: return "0h 0m", 0
         
+        # 1. Soma Tempo
         seg = df['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
+        tempo_str = f"{h}h {m}m"
         
+        # 2. Conta Páginas Feitas Hoje
         paginas = 0
+        # Pega a última coluna do Log (onde salvamos "1, 2, 3" ou "-")
         col_pags = df.columns[-1] 
         for item in df[col_pags]:
-            if str(item).strip() not in ["", "-"]:
-                paginas += len(str(item).split(','))
+            texto = str(item).strip()
+            if texto not in ["", "-"]:
+                # Conta quantos itens tem separados por vírgula
+                lista = [x for x in texto.split(',') if x.strip()]
+                paginas += len(lista)
                 
-        return f"{h:02d}h {m:02d}m", paginas
-    except: return "Calculando...", 0
+        return tempo_str, paginas
+    except: return "...", 0
 
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
@@ -151,7 +152,7 @@ if not cookie_usuario and not st.session_state.get('password_correct', False):
         pass_input = st.text_input("Senha", type="password")
 
         if st.button("Entrar", type="primary"):
-            with st.spinner("Autenticando..."): # BLOQUEIO VISUAL
+            with st.spinner("Autenticando..."):
                 if user_input != "Selecione..." and pass_input == usuarios[user_input]:
                     st.session_state['password_correct'] = True
                     st.session_state['usuario_logado'] = user_input
@@ -167,12 +168,12 @@ if cookie_usuario:
 
 usuario = st.session_state['usuario_logado'].title()
 
-# --- 5. BARRA LATERAL ---
+# --- 5. BARRA LATERAL (AJUSTADA PARA NÃO CORTAR TEXTO) ---
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
     if st.button("Sair / Logout"):
-        with st.spinner("Saindo..."): # BLOQUEIO VISUAL
+        with st.spinner("Saindo..."):
             try: cookie_manager.delete("usuario_associacao")
             except: pass
             for key in list(st.session_state.keys()):
@@ -183,31 +184,30 @@ with st.sidebar:
     st.divider()
     st.markdown("### 📊 Produção Hoje")
     
-    # Spinner para carregar resumo
     if 'resumo_dia' not in st.session_state:
-        with st.spinner("Calculando métricas..."):
+        with st.spinner("Calculando..."):
             st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
     
     t, p = st.session_state['resumo_dia']
-    c1, c2 = st.columns(2)
-    c1.metric("Tempo", t)
-    c2.metric("Páginas", p)
+    
+    # MUDANÇA AQUI: Layout vertical para não cortar
+    st.metric("⏱ Tempo Trabalhado", t)
+    st.metric("📄 Páginas Entregues", p)
     
     if st.button("Atualizar Métricas"):
-        with st.spinner("Recalculando..."): # BLOQUEIO VISUAL
+        with st.spinner("Recalculando..."):
             st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
             st.rerun()
     
     st.divider()
     if st.button("🔄 Atualizar Lista Sites"):
-        with st.spinner("Baixando sites do Sheets..."): # BLOQUEIO VISUAL
+        with st.spinner("Baixando sites..."):
             carregar_lista_sites.clear()
             st.rerun()
 
 # --- 6. SISTEMA PRINCIPAL ---
 st.title("🔗 Controle de Progresso")
 
-# Spinner para carregamento inicial
 with st.spinner("Carregando sistema..."):
     SITES = carregar_lista_sites()
     LETRAS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -216,12 +216,10 @@ c1, c2 = st.columns(2)
 with c1: site = st.selectbox("Site / Projeto", SITES)
 with c2: letra = st.selectbox("Letra / Lote", LETRAS)
 
-# --- BLOQUEIO DURANTE CONSULTA DE PÁGINAS ---
+# Bloqueio visual durante consulta
 chave = f"{site}_{letra}"
 if st.session_state.get('last_sel') != chave:
-    # AQUI É ONDE DAVA BUG: MUDANÇA RÁPIDA
-    # Agora colocamos um spinner que bloqueia a tela enquanto ele vai no banco
-    with st.spinner(f"Verificando histórico de {site} - {letra}..."):
+    with st.spinner(f"Verificando histórico..."):
         tot, feitas = buscar_status_paginas(site, letra)
         st.session_state.mem_tot = tot
         st.session_state.mem_feit = feitas
@@ -254,7 +252,7 @@ b1, b2, b3 = st.columns(3)
 if st.session_state.status == "PARADO":
     if not bloq:
         if b1.button("▶️ INICIAR", type="primary", use_container_width=True):
-            with st.spinner("Iniciando cronômetro e salvando..."): # BLOQUEIO VISUAL
+            with st.spinner("Iniciando..."):
                 if tot_pg and st.session_state.get('mem_tot') is None:
                     salvar_progresso(site, letra, tot_pg, [])
                     st.session_state.mem_tot = tot_pg
@@ -266,12 +264,11 @@ if st.session_state.status == "PARADO":
 
 elif st.session_state.status == "TRABALHANDO":
     if b2.button("⏸ PAUSAR", use_container_width=True):
-        with st.spinner("Salvando pausa..."): # BLOQUEIO VISUAL
+        with st.spinner("Salvando pausa..."):
             if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora):
                 if sel_agora:
                     salvar_progresso(site, letra, tot_pg, sel_agora)
                     st.session_state.mem_feit += sel_agora
-                    # Atualiza o resumo diário já que houve progresso
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
                 st.session_state.status = "PAUSADO"
                 st.rerun()
@@ -281,7 +278,7 @@ elif st.session_state.status == "TRABALHANDO":
     
     if comp:
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
-            with st.spinner("Finalizando e fechando letra..."): # BLOQUEIO VISUAL
+            with st.spinner("Finalizando..."):
                 if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora):
                     salvar_progresso(site, letra, tot_pg, sel_agora)
                     st.session_state.mem_feit += sel_agora
@@ -294,8 +291,7 @@ elif st.session_state.status == "TRABALHANDO":
 elif st.session_state.status == "PAUSADO":
     st.warning("Pausado")
     if b1.button("▶️ RETOMAR", type="primary", use_container_width=True):
-        with st.spinner("Retomando cronômetro..."): # BLOQUEIO VISUAL
+        with st.spinner("Retomando..."):
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
-
