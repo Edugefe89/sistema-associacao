@@ -115,39 +115,54 @@ def registrar_log(operador, site, letra, acao, total, novas):
     except: return False
 
 def calcular_resumo_diario(usuario):
+    """Calcula tempo PRODUTIVO e páginas feitas hoje"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         df = pd.DataFrame(sheet.get_all_records())
         if df.empty: return "0h 0m", 0
         
-        # Filtra Usuário
+        # 1. Filtra Usuário
         df = df[df['Operador'] == usuario]
         
-        # Filtra Hoje
+        # 2. Filtra Hoje
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
+        # Garante que é string para não dar erro
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
         if df.empty: return "0h 0m", 0
         
-        # 1. Soma Tempo
-        seg = df['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df.columns else 0
+        # --- CORREÇÃO DO TEMPO (SÓ PRODUTIVO) ---
+        # Só soma o tempo se a ação foi PAUSA ou FIM. 
+        # (Ignora RETOMADA, pois é o tempo de descanso)
+        df_produtivo = df[df['Acao'].isin(['PAUSA', 'FIM'])]
+        seg = df_produtivo['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_produtivo.columns else 0
+        
         h, m = int(seg // 3600), int((seg % 3600) // 60)
+        s = int(seg % 60) # Opcional: se quiser mostrar segundos também
+        
+        # Se quiser mostrar segundos, mude o return final. 
+        # Por enquanto mantive Horas e Minutos.
         tempo_str = f"{h}h {m}m"
         
-        # 2. Conta Páginas Feitas Hoje
+        # --- CORREÇÃO DAS PÁGINAS (COLUNA CERTA) ---
         paginas = 0
-        # Pega a última coluna do Log (onde salvamos "1, 2, 3" ou "-")
-        col_pags = df.columns[-1] 
-        for item in df[col_pags]:
-            texto = str(item).strip()
-            if texto not in ["", "-"]:
-                # Conta quantos itens tem separados por vírgula
-                lista = [x for x in texto.split(',') if x.strip()]
-                paginas += len(lista)
-                
+        
+        # Procura explicitamente pela coluna 'Paginas_Turno'
+        if 'Paginas_Turno' in df.columns:
+            for item in df['Paginas_Turno']:
+                texto = str(item).strip()
+                # Ignora traços e vazios
+                if texto and texto not in ["", "-"]:
+                    # Quebra a lista "1, 2, 3" e conta
+                    lista = [x for x in texto.split(',') if x.strip()]
+                    paginas += len(lista)
+        
         return tempo_str, paginas
-    except: return "...", 0
+
+    except Exception as e:
+        print(f"Erro resumo: {e}")
+        return "...", 0
 
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
@@ -307,4 +322,5 @@ elif st.session_state.status == "PAUSADO":
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
+
 
