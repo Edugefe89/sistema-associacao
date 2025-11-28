@@ -97,8 +97,20 @@ def registrar_log(operador, site, letra, acao, total, novas):
         if 'id_sessao' not in st.session_state: st.session_state.id_sessao = str(uuid.uuid4())
         
         str_novas = ", ".join(map(str, novas)) if novas else "-"
-        sheet.append_row([st.session_state.id_sessao, operador, site, letra, acao, 
-                          agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), tempo, str_novas])
+        
+        nova_linha = [
+            st.session_state.id_sessao, 
+            operador, 
+            site, 
+            letra, 
+            acao, 
+            agora.strftime("%d/%m/%Y %H:%M:%S"), 
+            str(agora.timestamp()), 
+            tempo, 
+            str_novas,
+            total
+        ]
+        sheet.append_row(nova_linha)
         return True
     except: return False
 
@@ -295,3 +307,4 @@ elif st.session_state.status == "PAUSADO":
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
+
