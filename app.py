@@ -60,21 +60,36 @@ def buscar_status_paginas(site, letra):
         return None, []
     except: return None, []
 
-def salvar_progresso(site, letra, total, novas):
+def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
+        
+        # Busca o histórico antigo
         _, ja_feitas = buscar_status_paginas(site, letra)
-        lista_final = sorted(list(set(ja_feitas + novas)))
-        txt_salvar = ", ".join(map(str, lista_final))
-        chave = f"{site} | {letra}".strip()
-        cell = sheet.find(chave)
+        
+        # Junta tudo
+        lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
+        
+        # --- FAXINA DE DADOS (Correção do erro 2003) ---
+        # Mantém apenas páginas que são menores ou iguais ao total
+        # Ex: Se Total=10, ele apaga o 2003 da lista automaticamente
+        lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
+        
+        # Transforma em texto
+        texto_para_salvar = ", ".join(map(str, lista_limpa))
+        
+        chave_busca = f"{site} | {letra}".strip()
+        cell = sheet.find(chave_busca)
+        
         if cell:
-            sheet.update_cell(cell.row, 5, txt_salvar)
-            sheet.update_cell(cell.row, 4, total)
+            sheet.update_cell(cell.row, 5, texto_para_salvar)
+            sheet.update_cell(cell.row, 4, total_paginas)
         else:
-            sheet.append_row([chave, site, letra, total, txt_salvar])
-    except: pass
+            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar])
+            
+    except Exception as e:
+        st.error(f"Erro ao salvar progresso: {e}")
 
 def registrar_log(operador, site, letra, acao, total, novas):
     try:
@@ -283,3 +298,4 @@ elif st.session_state.status == "PAUSADO":
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
+
