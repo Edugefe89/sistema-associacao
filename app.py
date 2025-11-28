@@ -186,23 +186,29 @@ usuario = st.session_state['usuario_logado'].title()
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
-    # CORREÇÃO 2: Botão de Sair que funciona de verdade
+    # CORREÇÃO: LOGOUT BLINDADO COM MAIS TEMPO
     if st.button("Sair / Logout"):
-        with st.spinner("Desconectando..."):
-            # 1. Deleta o cookie do navegador
+        with st.spinner("Desconectando... Aguarde..."):
+            # 1. Tenta apagar o cookie
             try: 
                 cookie_manager.delete("usuario_associacao")
             except: 
                 pass
             
-            # 2. Limpa a memória do Python
+            # 2. Tenta SOBRESCREVER com vazio (segurança extra)
+            try:
+                cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
+            except:
+                pass
+            
+            # 3. Limpa a memória do Python
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             
-            # 3. Espera o navegador entender que o cookie sumiu
-            time.sleep(2) 
+            # 4. Espera 5 segundos (tempo para o navegador processar)
+            time.sleep(5) 
             
-            # 4. Recarrega a página (agora sem cookie, vai pro login)
+            # 5. Recarrega a página
             st.rerun()
 
     st.divider()
