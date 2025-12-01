@@ -61,14 +61,18 @@ def buscar_status_paginas(site, letra):
         return None, [], 100
     except: return None, [], 100
 
-def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultima_pag=100):
+# --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
+def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
         _, ja_feitas, _ = buscar_status_paginas(site, letra)
         
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
+        
+        # FAXINA DE DADOS (Remove páginas maiores que o total, ex: 2003)
         lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
+        
         texto_para_salvar = ", ".join(map(str, lista_limpa))
         
         chave_busca = f"{site} | {letra}".strip()
@@ -78,8 +82,9 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultim
             sheet.update_cell(cell.row, 5, texto_para_salvar)
             sheet.update_cell(cell.row, 4, total_paginas)
             sheet.update_cell(cell.row, 6, qtd_ultima_pag)
+            sheet.update_cell(cell.row, 7, usuario_nome) # Salva Responsável
         else:
-            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag])
+            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag, usuario_nome])
     except: pass
 
 def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
@@ -127,11 +132,13 @@ def calcular_resumo_diario(usuario):
         
         if df.empty: return "0h 0m", 0, 0
         
-        df_prod = df[df['Acao'].isin(['PAUSA', 'FIM'])]
-        seg = df_prod['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_prod.columns else 0
+        # 1. Soma Tempo (Apenas PAUSA e FIM)
+        df_produtivo = df[df['Acao'].isin(['PAUSA', 'FIM'])]
+        seg = df_produtivo['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_produtivo.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
         tempo_str = f"{h}h {m}m"
         
+        # 2. Soma Páginas (Coluna Paginas_Turno)
         paginas = 0
         if 'Paginas_Turno' in df.columns:
             for item in df['Paginas_Turno']:
@@ -140,30 +147,17 @@ def calcular_resumo_diario(usuario):
                     lista = [x for x in texto.split(',') if x.strip()]
                     paginas += len(lista)
         
+        # 3. Soma Produtos (Coluna Qtd_Total)
         total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum() if 'Qtd_Total' in df.columns else 0
+        
         return tempo_str, paginas, int(total_prod)
     except: return "...", 0, 0
 
-# --- 4. LÓGICA DE LOGIN (COM CONTROLE DE FLUXO) ---
+# --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
+cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
 
-# VERIFICA SE O USUÁRIO ACABOU DE CLICAR EM SAIR (BANDEIRA NA URL)
-if "logout" in st.query_params:
-    # Força a deleção do cookie agora que a página recarregou
-    try:
-        cookie_manager.delete("usuario_associacao")
-    except: pass
-    
-    # Limpa a URL para permitir login futuro
-    st.query_params.clear()
-    
-    # Define usuário como nulo para forçar a tela de login
-    cookie_usuario = None
-else:
-    # Vida normal: tenta pegar o cookie
-    cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
-
-# SE NÃO ESTIVER LOGADO -> TELA DE LOGIN
+# Se não estiver logado, mostra tela de login
 if not cookie_usuario and not st.session_state.get('password_correct', False):
     st.title("🔒 Acesso Restrito")
     try: usuarios = st.secrets["passwords"]
@@ -180,7 +174,6 @@ if not cookie_usuario and not st.session_state.get('password_correct', False):
                     st.session_state['password_correct'] = True
                     st.session_state['usuario_logado'] = user_input
                     
-                    # Cookie de 1 dia
                     cookie_manager.set("usuario_associacao", user_input, expires_at=datetime.now() + timedelta(days=1))
                     
                     time.sleep(1)
@@ -199,21 +192,21 @@ usuario = st.session_state['usuario_logado'].title()
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
-    # --- LOGOUT NUCLEAR (COM URL PARAM) ---
+    # LOGOUT NUCLEAR
     if st.button("Sair / Logout"):
-        with st.spinner("Saindo..."):
-            # 1. Tenta apagar o cookie normalmente
-            try: cookie_manager.delete("usuario_associacao")
+        with st.spinner("Desconectando..."):
+            try: 
+                cookie_manager.delete("usuario_associacao")
             except: pass
             
-            # 2. Limpa a memória
-            st.session_state.clear()
+            try:
+                cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
+            except: pass
             
-            # 3. MARCA NA URL QUE ESTAMOS SAINDO (ISSO É O SEGREDO)
-            st.query_params["logout"] = "true"
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             
-            # 4. Recarrega (o código lá em cima vai ler o 'logout' e bloquear o cookie)
-            time.sleep(1)
+            time.sleep(3) # Tempo aumentado para garantir
             st.rerun()
 
     st.divider()
@@ -303,6 +296,7 @@ if st.session_state.status == "PARADO":
         if b1.button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
                 if st.session_state.get('mem_tot') is None:
+                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
                     st.session_state.mem_tot = tot_pg
                     st.session_state.mem_ult = qtd_ultima
@@ -318,6 +312,7 @@ elif st.session_state.status == "TRABALHANDO":
         with st.spinner("Salvando..."):
             if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
                 if sel_agora:
+                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
@@ -331,6 +326,7 @@ elif st.session_state.status == "TRABALHANDO":
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
             with st.spinner("Finalizando..."):
                 if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
+                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
