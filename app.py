@@ -42,46 +42,61 @@ def carregar_lista_sites():
     except: return []
 
 def buscar_status_paginas(site, letra):
+    """Retorna: (Total Paginas, Lista Feitas, Qtd Produtos Ultima Pagina)"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
         dados = sheet.get_all_records()
         df = pd.DataFrame(dados)
         chave = f"{site} | {letra}".strip()
+        
         if not df.empty and 'Chave' in df.columns:
             res = df[df['Chave'].astype(str).str.strip() == chave]
             if not res.empty:
                 total = int(res.iloc[0]['Qtd_Paginas'])
+                
                 feitas_str = str(res.iloc[0]['Paginas_Concluidas'])
                 feitas = [int(x) for x in feitas_str.split(',') if x.strip().isdigit()] if feitas_str else []
-                return total, feitas
-        return None, []
-    except: return None, []
+                
+                # Tenta pegar a qtd da última página (Coluna F / index 5 se existir)
+                # Se não tiver preenchido (letras antigas), assume 100 por padrão
+                try:
+                    qtd_ultima = int(res.iloc[0]['Qtd_Ultima_Pag'])
+                except:
+                    qtd_ultima = 100 
+                
+                return total, feitas, qtd_ultima
+        return None, [], 100
+    except: return None, [], 100
 
-def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas):
+def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultima_pag=100):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
-        _, ja_feitas = buscar_status_paginas(site, letra)
+        
+        # Busca dados atuais para não perder histórico
+        _, ja_feitas, _ = buscar_status_paginas(site, letra)
         
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
-        
-        # FAXINA DE DADOS
+        # Faxina: remove páginas maiores que o total
         lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
-        
         texto_para_salvar = ", ".join(map(str, lista_limpa))
         
         chave_busca = f"{site} | {letra}".strip()
         cell = sheet.find(chave_busca)
         
         if cell:
+            # Atualiza: Col 5 (Lista), Col 4 (Total)
             sheet.update_cell(cell.row, 5, texto_para_salvar)
             sheet.update_cell(cell.row, 4, total_paginas)
+            # Se quiser atualizar a qtd da última página também (caso tenha mudado)
+            sheet.update_cell(cell.row, 6, qtd_ultima_pag)
         else:
-            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar])
+            # Cria nova linha: Chave, Site, Letra, Total, Lista, Qtd_Ultima
+            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag])
     except: pass
 
-def registrar_log(operador, site, letra, acao, total, novas):
+def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
@@ -97,8 +112,16 @@ def registrar_log(operador, site, letra, acao, total, novas):
         
         str_novas = ", ".join(map(str, novas)) if novas else "-"
         
-        # CÁLCULO DE PRODUTOS (NOVO) -> 1 Página = 100 Produtos
-        qtd_produtos = len(novas) * 100 if novas else 0
+        # --- CÁLCULO PRECISO DE PRODUTOS ---
+        qtd_produtos = 0
+        if novas:
+            for p in novas:
+                # Se for a última página, soma o valor "quebrado"
+                if p == int(total):
+                    qtd_produtos += int(qtd_ultima_pag)
+                else:
+                    # Se for qualquer outra página, soma 100
+                    qtd_produtos += 100
         
         # Salva na coluna K (Qtd_Total)
         nova_linha = [
@@ -112,14 +135,14 @@ def registrar_log(operador, site, letra, acao, total, novas):
             tempo, 
             str_novas,
             total,
-            qtd_produtos # <--- Coluna K
+            qtd_produtos
         ]
         sheet.append_row(nova_linha)
         return True
     except: return False
 
 def calcular_resumo_diario(usuario):
-    """Calcula tempo, páginas e produtos feitos hoje"""
+    """Calcula usando a soma direta das colunas do Log"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
@@ -132,7 +155,7 @@ def calcular_resumo_diario(usuario):
         
         if df.empty: return "0h 0m", 0, 0
         
-        # 1. Soma Tempo
+        # 1. Soma Tempo (PAUSA/FIM)
         df_produtivo = df[df['Acao'].isin(['PAUSA', 'FIM'])]
         seg = df_produtivo['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_produtivo.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
@@ -147,11 +170,16 @@ def calcular_resumo_diario(usuario):
                     lista = [x for x in texto.split(',') if x.strip()]
                     paginas += len(lista)
         
-        # 3. Calcula Produtos (Páginas * 100)
-        total_produtos = paginas * 100
+        # 3. Soma Produtos (Coluna K - Qtd_Total)
+        total_produtos = 0
+        if 'Qtd_Total' in df.columns:
+            # Converte para numérico e soma
+            total_produtos = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum()
         
-        return tempo_str, paginas, total_produtos
-    except: return "...", 0, 0
+        return tempo_str, paginas, int(total_produtos)
+    except Exception as e: 
+        print(e)
+        return "...", 0, 0
 
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
@@ -190,14 +218,10 @@ with st.sidebar:
     
     if st.button("Sair / Logout"):
         with st.spinner("Desconectando..."):
-            try: cookie_manager.delete("usuario_associacao")
+            try: cookie_manager.delete("usuario_associacao"); cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
             except: pass
-            try: cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
-            except: pass
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            time.sleep(5)
-            st.rerun()
+            for key in list(st.session_state.keys()): del st.session_state[key]
+            time.sleep(3); st.rerun()
 
     st.divider()
     st.markdown("### 📊 Produção Hoje")
@@ -206,14 +230,12 @@ with st.sidebar:
         with st.spinner("Calculando..."):
             st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
     
-    # AGORA RECEBE 3 VALORES
     t, p, prod = st.session_state['resumo_dia']
     
-    # Layout Melhorado
     st.metric("⏱ Tempo", t)
     c_pag, c_prod = st.columns(2)
     c_pag.metric("📄 Pags", p)
-    c_prod.metric("📦 Produtos", prod) # Nova métrica
+    c_prod.metric("📦 Prods", prod)
     
     if st.button("Atualizar Métricas"):
         with st.spinner("Recalculando..."):
@@ -240,24 +262,42 @@ with c2: letra = st.selectbox("Letra / Lote", LETRAS)
 chave = f"{site}_{letra}"
 if st.session_state.get('last_sel') != chave:
     with st.spinner(f"Verificando histórico..."):
-        tot, feitas = buscar_status_paginas(site, letra)
+        # Agora retorna 3 valores (Total, Feitas, Qtd_Ultima)
+        tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
         st.session_state.mem_tot = tot
         st.session_state.mem_feit = feitas
+        st.session_state.mem_ult = qtd_ult
         st.session_state['last_sel'] = chave
 
 tot_pg = st.session_state.get('mem_tot')
 feitas_pg = st.session_state.get('mem_feit', [])
+qtd_ultima = st.session_state.get('mem_ult', 100) # Padrão 100 se não vier nada
+
 faltam = []
 bloq = False
 
 if tot_pg:
+    # Se já existe, mostra as infos
     faltam = [p for p in range(1, tot_pg+1) if p not in feitas_pg]
     prog = len(feitas_pg)/tot_pg if tot_pg > 0 else 0
     st.progress(prog, f"{len(feitas_pg)}/{tot_pg} ({int(prog*100)}%)")
+    
+    # Mostra a quantidade da última página apenas como info
+    st.caption(f"ℹ️ Última página ({tot_pg}) tem **{qtd_ultima}** produtos.")
+    
     if not faltam: st.success("Letra Concluída!"); bloq = True
 else:
-    st.warning("Letra Nova")
-    tot_pg = st.number_input("Total Páginas", 1, step=1)
+    # SE FOR NOVO CADASTRO
+    st.warning("🆕 Letra Nova - Configuração Inicial")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        tot_pg = st.number_input("Total de Páginas:", 1, step=1)
+    with col_b:
+        # Pergunta a quantidade da última página
+        qtd_ultima_input = st.number_input(f"Qtd Produtos na Pág {tot_pg} (Última):", min_value=1, max_value=100, value=100)
+    
+    # Atualiza a variável temporária para usar no salvamento
+    qtd_ultima = qtd_ultima_input
 
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
@@ -273,11 +313,15 @@ if st.session_state.status == "PARADO":
     if not bloq:
         if b1.button("▶️ INICIAR", type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
-                if tot_pg and st.session_state.get('mem_tot') is None:
-                    salvar_progresso(site, letra, tot_pg, [])
+                # Salva o cadastro inicial (Total + Qtd Ultima)
+                if st.session_state.get('mem_tot') is None:
+                    salvar_progresso(site, letra, tot_pg, [], qtd_ultima)
                     st.session_state.mem_tot = tot_pg
+                    st.session_state.mem_ult = qtd_ultima
+                
                 if 'ultimo_timestamp' in st.session_state: del st.session_state['ultimo_timestamp']
-                if registrar_log(usuario, site, letra, "INICIO", tot_pg, []):
+                
+                if registrar_log(usuario, site, letra, "INICIO", tot_pg, [], qtd_ultima):
                     st.session_state.status = "TRABALHANDO"
                     st.rerun()
     else: st.info("Finalizado.")
@@ -285,9 +329,9 @@ if st.session_state.status == "PARADO":
 elif st.session_state.status == "TRABALHANDO":
     if b2.button("⏸ PAUSAR", use_container_width=True):
         with st.spinner("Salvando pausa..."):
-            if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora):
+            if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
                 if sel_agora:
-                    salvar_progresso(site, letra, tot_pg, sel_agora)
+                    salvar_progresso(site, letra, tot_pg, sel_agora, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
                 st.session_state.status = "PAUSADO"
@@ -299,8 +343,8 @@ elif st.session_state.status == "TRABALHANDO":
     if comp:
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
             with st.spinner("Finalizando..."):
-                if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora):
-                    salvar_progresso(site, letra, tot_pg, sel_agora)
+                if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
+                    salvar_progresso(site, letra, tot_pg, sel_agora, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
                     st.session_state.status = "PARADO"
@@ -312,7 +356,6 @@ elif st.session_state.status == "PAUSADO":
     st.warning("Pausado")
     if b1.button("▶️ RETOMAR", type="primary", use_container_width=True):
         with st.spinner("Retomando..."):
-            if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
+            if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, [], qtd_ultima):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
-
