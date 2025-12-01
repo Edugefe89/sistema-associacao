@@ -66,7 +66,7 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas):
         
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
         
-        # FAXINA DE DADOS (Remove páginas maiores que o total, ex: 2003)
+        # FAXINA DE DADOS
         lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
         
         texto_para_salvar = ", ".join(map(str, lista_limpa))
@@ -97,7 +97,10 @@ def registrar_log(operador, site, letra, acao, total, novas):
         
         str_novas = ", ".join(map(str, novas)) if novas else "-"
         
-        # Agora salva na coluna correta (incluindo o Total na coluna J)
+        # CÁLCULO DE PRODUTOS (NOVO) -> 1 Página = 100 Produtos
+        qtd_produtos = len(novas) * 100 if novas else 0
+        
+        # Salva na coluna K (Qtd_Total)
         nova_linha = [
             st.session_state.id_sessao, 
             operador, 
@@ -108,33 +111,34 @@ def registrar_log(operador, site, letra, acao, total, novas):
             str(agora.timestamp()), 
             tempo, 
             str_novas,
-            total
+            total,
+            qtd_produtos # <--- Coluna K
         ]
         sheet.append_row(nova_linha)
         return True
     except: return False
 
 def calcular_resumo_diario(usuario):
-    """Calcula tempo PRODUTIVO e páginas feitas hoje"""
+    """Calcula tempo, páginas e produtos feitos hoje"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         df = pd.DataFrame(sheet.get_all_records())
-        if df.empty: return "0h 0m", 0
+        if df.empty: return "0h 0m", 0, 0
         
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
-        if df.empty: return "0h 0m", 0
+        if df.empty: return "0h 0m", 0, 0
         
-        # 1. Soma Tempo (Apenas PAUSA e FIM)
+        # 1. Soma Tempo
         df_produtivo = df[df['Acao'].isin(['PAUSA', 'FIM'])]
         seg = df_produtivo['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_produtivo.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
         tempo_str = f"{h}h {m}m"
         
-        # 2. Soma Páginas (Coluna Paginas_Turno)
+        # 2. Soma Páginas
         paginas = 0
         if 'Paginas_Turno' in df.columns:
             for item in df['Paginas_Turno']:
@@ -143,14 +147,16 @@ def calcular_resumo_diario(usuario):
                     lista = [x for x in texto.split(',') if x.strip()]
                     paginas += len(lista)
         
-        return tempo_str, paginas
-    except: return "...", 0
+        # 3. Calcula Produtos (Páginas * 100)
+        total_produtos = paginas * 100
+        
+        return tempo_str, paginas, total_produtos
+    except: return "...", 0, 0
 
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
 cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
 
-# Se não estiver logado, mostra tela de login
 if not cookie_usuario and not st.session_state.get('password_correct', False):
     st.title("🔒 Acesso Restrito")
     try: usuarios = st.secrets["passwords"]
@@ -166,17 +172,13 @@ if not cookie_usuario and not st.session_state.get('password_correct', False):
                 if user_input != "Selecione..." and pass_input == usuarios[user_input]:
                     st.session_state['password_correct'] = True
                     st.session_state['usuario_logado'] = user_input
-                    
-                    # CORREÇÃO 1: Validade de 1 dia (24h)
                     cookie_manager.set("usuario_associacao", user_input, expires_at=datetime.now() + pd.Timedelta(days=1))
-                    
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Dados incorretos.")
     st.stop()
 
-# Recupera sessão se o cookie existir
 if cookie_usuario:
     st.session_state['usuario_logado'] = cookie_usuario
 
@@ -186,29 +188,15 @@ usuario = st.session_state['usuario_logado'].title()
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
-    # CORREÇÃO: LOGOUT BLINDADO COM MAIS TEMPO
     if st.button("Sair / Logout"):
-        with st.spinner("Desconectando... Aguarde..."):
-            # 1. Tenta apagar o cookie
-            try: 
-                cookie_manager.delete("usuario_associacao")
-            except: 
-                pass
-            
-            # 2. Tenta SOBRESCREVER com vazio (segurança extra)
-            try:
-                cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
-            except:
-                pass
-            
-            # 3. Limpa a memória do Python
+        with st.spinner("Desconectando..."):
+            try: cookie_manager.delete("usuario_associacao")
+            except: pass
+            try: cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
+            except: pass
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            
-            # 4. Espera 5 segundos (tempo para o navegador processar)
-            time.sleep(5) 
-            
-            # 5. Recarrega a página
+            time.sleep(5)
             st.rerun()
 
     st.divider()
@@ -218,10 +206,14 @@ with st.sidebar:
         with st.spinner("Calculando..."):
             st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
     
-    t, p = st.session_state['resumo_dia']
+    # AGORA RECEBE 3 VALORES
+    t, p, prod = st.session_state['resumo_dia']
     
-    st.metric("⏱ Tempo Trabalhado", t)
-    st.metric("📄 Páginas Entregues", p)
+    # Layout Melhorado
+    st.metric("⏱ Tempo", t)
+    c_pag, c_prod = st.columns(2)
+    c_pag.metric("📄 Pags", p)
+    c_prod.metric("📦 Prods", prod) # Nova métrica
     
     if st.button("Atualizar Métricas"):
         with st.spinner("Recalculando..."):
