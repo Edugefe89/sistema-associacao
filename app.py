@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta # Importei timedelta para facilitar contas de data
+from datetime import datetime, timedelta
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -144,11 +144,26 @@ def calcular_resumo_diario(usuario):
         return tempo_str, paginas, int(total_prod)
     except: return "...", 0, 0
 
-# --- 4. LÓGICA DE LOGIN (Início do App) ---
+# --- 4. LÓGICA DE LOGIN (COM CONTROLE DE FLUXO) ---
 cookie_manager = get_manager()
-cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
 
-# Se NÃO tem cookie E NÃO passou pelo login manual, mostra a tela de login
+# VERIFICA SE O USUÁRIO ACABOU DE CLICAR EM SAIR (BANDEIRA NA URL)
+if "logout" in st.query_params:
+    # Força a deleção do cookie agora que a página recarregou
+    try:
+        cookie_manager.delete("usuario_associacao")
+    except: pass
+    
+    # Limpa a URL para permitir login futuro
+    st.query_params.clear()
+    
+    # Define usuário como nulo para forçar a tela de login
+    cookie_usuario = None
+else:
+    # Vida normal: tenta pegar o cookie
+    cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
+
+# SE NÃO ESTIVER LOGADO -> TELA DE LOGIN
 if not cookie_usuario and not st.session_state.get('password_correct', False):
     st.title("🔒 Acesso Restrito")
     try: usuarios = st.secrets["passwords"]
@@ -165,16 +180,16 @@ if not cookie_usuario and not st.session_state.get('password_correct', False):
                     st.session_state['password_correct'] = True
                     st.session_state['usuario_logado'] = user_input
                     
-                    # Salva Cookie com validade de 1 dia
+                    # Cookie de 1 dia
                     cookie_manager.set("usuario_associacao", user_input, expires_at=datetime.now() + timedelta(days=1))
                     
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Dados incorretos.")
-    st.stop() # Para o código aqui se não estiver logado
+    st.stop()
 
-# Se tem cookie, recupera a sessão
+# Recupera sessão se o cookie existir
 if cookie_usuario:
     st.session_state['usuario_logado'] = cookie_usuario
 
@@ -184,23 +199,21 @@ usuario = st.session_state['usuario_logado'].title()
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
-    # --- LOGOUT NUCLEAR (RESOLVE O PROBLEMA DE VEZ) ---
+    # --- LOGOUT NUCLEAR (COM URL PARAM) ---
     if st.button("Sair / Logout"):
-        with st.spinner("Desconectando com segurança..."):
-            # 1. Substitui o cookie por vazio e expira ele IMEDIATAMENTE (no passado)
-            cookie_manager.set("usuario_associacao", "", expires_at=datetime.now() - timedelta(days=1))
-            
-            # 2. Tenta deletar explicitamente (garantia extra)
+        with st.spinner("Saindo..."):
+            # 1. Tenta apagar o cookie normalmente
             try: cookie_manager.delete("usuario_associacao")
             except: pass
             
-            # 3. Limpa toda a memória da sessão do Python
+            # 2. Limpa a memória
             st.session_state.clear()
             
-            # 4. Espera o navegador processar a morte do cookie
-            time.sleep(2)
+            # 3. MARCA NA URL QUE ESTAMOS SAINDO (ISSO É O SEGREDO)
+            st.query_params["logout"] = "true"
             
-            # 5. Recarrega a página (vai cair na tela de login obrigatoriamente)
+            # 4. Recarrega (o código lá em cima vai ler o 'logout' e bloquear o cookie)
+            time.sleep(1)
             st.rerun()
 
     st.divider()
