@@ -26,7 +26,7 @@ def get_client_google():
         st.error(f"Erro de Conexão Google: {e}")
         return None
 
-# --- 3. FUNÇÕES DE DADOS (COM CACHE) ---
+# --- 3. FUNÇÕES DE DADOS ---
 @st.cache_data(ttl=300)
 def carregar_lista_sites():
     try:
@@ -42,7 +42,6 @@ def carregar_lista_sites():
     except: return []
 
 def buscar_status_paginas(site, letra):
-    """Retorna: (Total, Lista Feitas, Qtd Ultima)"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
@@ -61,7 +60,7 @@ def buscar_status_paginas(site, letra):
         return None, [], 100
     except: return None, [], 100
 
-def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultima_pag=100):
+def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
@@ -78,8 +77,9 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultim
             sheet.update_cell(cell.row, 5, texto_para_salvar)
             sheet.update_cell(cell.row, 4, total_paginas)
             sheet.update_cell(cell.row, 6, qtd_ultima_pag)
+            sheet.update_cell(cell.row, 7, usuario_nome)
         else:
-            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag])
+            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag, usuario_nome])
     except: pass
 
 def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
@@ -98,18 +98,15 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         
         str_novas = ", ".join(map(str, novas)) if novas else "-"
         
-        # CÁLCULO DE PRODUTOS
         qtd_produtos = 0
         if novas:
             for p in novas:
                 if p == int(total): qtd_produtos += int(qtd_ultima_pag)
                 else: qtd_produtos += 100
         
-        nova_linha = [
-            st.session_state.id_sessao, operador, site, letra, acao, 
-            agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
-            tempo, str_novas, total, qtd_produtos
-        ]
+        nova_linha = [st.session_state.id_sessao, operador, site, letra, acao, 
+                      agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
+                      tempo, str_novas, total, qtd_produtos]
         sheet.append_row(nova_linha)
         return True
     except: return False
@@ -124,7 +121,6 @@ def calcular_resumo_diario(usuario):
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
-        
         if df.empty: return "0h 0m", 0, 0
         
         df_prod = df[df['Acao'].isin(['PAUSA', 'FIM'])]
@@ -138,7 +134,6 @@ def calcular_resumo_diario(usuario):
                 if t and t not in ["", "-"]: paginas += len([x for x in t.split(',') if x.strip()])
         
         total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum() if 'Qtd_Total' in df.columns else 0
-        
         return f"{h}h {m}m", paginas, int(total_prod)
     except: return "...", 0, 0
 
@@ -180,32 +175,29 @@ with st.sidebar:
     st.markdown("### 📊 Hoje")
     if 'resumo_dia' not in st.session_state: st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
     t, p, prod = st.session_state['resumo_dia']
-    st.metric("Tempo", t)
-    c1, c2 = st.columns(2)
-    c1.metric("Pags", p); c2.metric("Prods", prod)
+    st.metric("Tempo", t); c1, c2 = st.columns(2); c1.metric("Pags", p); c2.metric("Prods", prod)
     if st.button("Atualizar"): 
         with st.spinner("."): st.session_state['resumo_dia'] = calcular_resumo_diario(usuario); st.rerun()
     st.divider()
     if st.button("🔄 Sites"): carregar_lista_sites.clear(); st.rerun()
 
-# --- 6. SISTEMA (LÓGICA FLEXÍVEL) ---
+# --- 6. SISTEMA ---
 st.title("🔗 Controle de Progresso")
 
 with st.spinner("Carregando..."):
     SITES = carregar_lista_sites()
     LETRAS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-# Se estiver trabalhando, TRAVA a seleção. Se não, libera.
-disabled_selection = True if st.session_state.get('status') == "TRABALHANDO" else False
+# Trava seleção se estiver trabalhando
+disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
 
 c1, c2 = st.columns(2)
-with c1: site = st.selectbox("Site", SITES, disabled=disabled_selection)
-with c2: letra = st.selectbox("Letra", LETRAS, disabled=disabled_selection)
+with c1: site = st.selectbox("Site", SITES, disabled=disabled_sel)
+with c2: letra = st.selectbox("Letra", LETRAS, disabled=disabled_sel)
 
-# Busca dados do banco (Histórico)
 chave = f"{site}_{letra}"
-if st.session_state.get('last_sel') != chave and not disabled_selection:
-    with st.spinner("Verificando histórico..."):
+if st.session_state.get('last_sel') != chave and not disabled_sel:
+    with st.spinner("Histórico..."):
         tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
         st.session_state.mem_tot = tot
         st.session_state.mem_feit = feitas
@@ -220,16 +212,14 @@ faltam = []
 bloq_total = False
 
 if tot_pg:
-    # Cenário: Letra já existe
     todas = list(range(1, tot_pg+1))
     faltam = [p for p in todas if p not in feitas_pg]
     prog = len(feitas_pg)/tot_pg if tot_pg > 0 else 0
     st.progress(prog, f"{len(feitas_pg)}/{tot_pg} ({int(prog*100)}%)")
-    st.caption(f"ℹ️ Última página ({tot_pg}) tem **{qtd_ultima}** produtos.")
+    st.caption(f"ℹ️ Última página tem **{qtd_ultima}** produtos.")
     if not faltam: st.success("Letra Concluída!"); bloq_total = True
 else:
-    # Cenário: Letra Nova (Pede Cadastro)
-    st.warning("🆕 Configuração Inicial da Letra")
+    st.warning("🆕 Configuração Inicial")
     col_a, col_b = st.columns(2)
     with col_a: tot_pg = st.number_input("Total Páginas:", 1, step=1)
     with col_b: qtd_ultima_input = st.number_input(f"Prods na Pág {tot_pg}:", 1, 100, 100)
@@ -238,60 +228,73 @@ else:
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
 
-# --- ÁREA DE TRABALHO ---
+# SELETOR DE PÁGINAS (CHECKLIST)
 sel_agora = []
-
-# Se estiver trabalhando, mostra o checklist
 if st.session_state.status == "TRABALHANDO" and tot_pg and faltam:
-    st.markdown("### 📝 O que você concluiu?")
-    sel_agora = st.multiselect("Marque as páginas finalizadas:", options=faltam)
+    st.markdown("### 📝 Marque o que você concluiu:")
+    sel_agora = st.multiselect("Selecione as páginas:", options=faltam)
 
+# --- NOVA TABELA DE STATUS DETALHADO ---
+# Só exibe se a letra já tiver sido criada
+if tot_pg is not None:
+    with st.expander("📋 Ver Tabela de Páginas", expanded=True):
+        # Cria a lista de dados para a tabela
+        dados_tabela = []
+        
+        # Junta o que já foi feito (Banco) com o que está selecionado agora (Tela)
+        paginas_visual_concluidas = set(feitas_pg + sel_agora)
+        
+        for i in range(1, tot_pg + 1):
+            if i in paginas_visual_concluidas:
+                status = "✅ Concluída"
+            else:
+                status = "⬜ Pendente"
+            dados_tabela.append({"Página": i, "Situação": status})
+        
+        df_status = pd.DataFrame(dados_tabela)
+        
+        # Exibe a tabela interativa
+        st.dataframe(
+            df_status,
+            use_container_width=True,
+            hide_index=True,
+            height=300, # Altura fixa com scroll
+            column_config={
+                "Página": st.column_config.NumberColumn(format="%d"),
+            }
+        )
+
+# --- BOTÕES ---
+st.divider()
 b1, b2, b3 = st.columns(3)
 
-# LÓGICA DO BOTÃO INICIAR / RETOMAR
 if st.session_state.status == "PARADO":
     if not bloq_total:
-        # Define o texto do botão dependendo se já começou ou não
         txt_btn = "▶️ RETOMAR" if feitas_pg else "▶️ INICIAR"
-        
         if b1.button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
-                # Se for novo, salva cadastro inicial
                 if st.session_state.get('mem_tot') is None:
-                    salvar_progresso(site, letra, tot_pg, [], qtd_ultima)
+                    salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
                     st.session_state.mem_tot = tot_pg
                     st.session_state.mem_ult = qtd_ultima
-                
-                # Inicia Cronômetro
                 if 'ultimo_timestamp' in st.session_state: del st.session_state['ultimo_timestamp']
-                
-                # Ação Log: Se já tinha progresso é RETOMADA, senão INICIO
                 acao_log = "RETOMADA" if feitas_pg else "INICIO"
-                
                 if registrar_log(usuario, site, letra, acao_log, tot_pg, [], qtd_ultima):
                     st.session_state.status = "TRABALHANDO"
                     st.rerun()
-    else:
-        st.info("Selecione outra letra.")
+    else: st.info("Selecione outra letra.")
 
-# LÓGICA QUANDO ESTÁ TRABALHANDO
 elif st.session_state.status == "TRABALHANDO":
-    
-    # PAUSAR (Libera a tela para escolher outra letra)
-    if b2.button("⏸ PAUSAR (Trocar/Sair)", use_container_width=True):
-        with st.spinner("Salvando e liberando tela..."):
-            # Salva páginas marcadas (mesmo que parcial)
+    if b2.button("⏸ PAUSAR (Sair)", use_container_width=True):
+        with st.spinner("Salvando..."):
             if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
                 if sel_agora:
-                    salvar_progresso(site, letra, tot_pg, sel_agora, qtd_ultima)
+                    salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
-                
-                # O PULO DO GATO: Volta para PARADO para liberar os Selectbox
                 st.session_state.status = "PARADO"
                 st.rerun()
     
-    # FINALIZAR (Só se completou tudo)
     comp = False
     if faltam and len(sel_agora) == len(faltam): comp = True
     
@@ -299,10 +302,18 @@ elif st.session_state.status == "TRABALHANDO":
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
             with st.spinner("Finalizando..."):
                 if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
-                    salvar_progresso(site, letra, tot_pg, sel_agora, qtd_ultima)
+                    salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
                     st.session_state.status = "PARADO"
                     st.balloons(); time.sleep(2); st.rerun()
     else:
         b3.markdown(f"<div style='text-align:center; color:gray; font-size:12px; padding-top:10px;'>Faltam {len(faltam)} pgs</div>", unsafe_allow_html=True)
+
+elif st.session_state.status == "PAUSADO":
+    st.warning("Pausado")
+    if b1.button("▶️ RETOMAR", type="primary", use_container_width=True):
+        with st.spinner("Retomando..."):
+            if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, [], qtd_ultima):
+                st.session_state.status = "TRABALHANDO"
+                st.rerun()
