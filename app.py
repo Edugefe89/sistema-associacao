@@ -213,7 +213,7 @@ with st.sidebar:
     st.metric("⏱ Tempo", t)
     c_pag, c_prod = st.columns(2)
     c_pag.metric("📄 Pags", p)
-    c_prod.metric("📦 Prods", prod) # Nova métrica
+    c_prod.metric("📦 Produtos", prod) # Nova métrica
     
     if st.button("Atualizar Métricas"):
         with st.spinner("Recalculando..."):
@@ -315,3 +315,4 @@ elif st.session_state.status == "PAUSADO":
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, []):
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
+
