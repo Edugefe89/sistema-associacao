@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta # Importei timedelta para facilitar contas de data
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -26,7 +26,7 @@ def get_client_google():
         st.error(f"Erro de Conexão Google: {e}")
         return None
 
-# --- 3. FUNÇÕES DE DADOS ---
+# --- 3. FUNÇÕES DE DADOS (COM CACHE) ---
 @st.cache_data(ttl=300)
 def carregar_lista_sites():
     try:
@@ -42,6 +42,7 @@ def carregar_lista_sites():
     except: return []
 
 def buscar_status_paginas(site, letra):
+    """Retorna: (Total, Lista Feitas, Qtd Ultima)"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
@@ -60,12 +61,10 @@ def buscar_status_paginas(site, letra):
         return None, [], 100
     except: return None, [], 100
 
-# --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
-def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
+def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, qtd_ultima_pag=100):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
-        
         _, ja_feitas, _ = buscar_status_paginas(site, letra)
         
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
@@ -79,10 +78,8 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_n
             sheet.update_cell(cell.row, 5, texto_para_salvar)
             sheet.update_cell(cell.row, 4, total_paginas)
             sheet.update_cell(cell.row, 6, qtd_ultima_pag)
-            sheet.update_cell(cell.row, 7, usuario_nome)
         else:
-            # Salva na ordem certa: Chave, Site, Letra, Total, Lista, QtdUltima, Usuario
-            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag, usuario_nome])
+            sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag])
     except: pass
 
 def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
@@ -107,14 +104,17 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
                 if p == int(total): qtd_produtos += int(qtd_ultima_pag)
                 else: qtd_produtos += 100
         
-        nova_linha = [st.session_state.id_sessao, operador, site, letra, acao, 
-                      agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
-                      tempo, str_novas, total, qtd_produtos]
+        nova_linha = [
+            st.session_state.id_sessao, operador, site, letra, acao, 
+            agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
+            tempo, str_novas, total, qtd_produtos
+        ]
         sheet.append_row(nova_linha)
         return True
     except: return False
 
 def calcular_resumo_diario(usuario):
+    """Calcula tempo PRODUTIVO e páginas feitas hoje"""
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
@@ -124,73 +124,118 @@ def calcular_resumo_diario(usuario):
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
+        
         if df.empty: return "0h 0m", 0, 0
         
         df_prod = df[df['Acao'].isin(['PAUSA', 'FIM'])]
         seg = df_prod['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_prod.columns else 0
         h, m = int(seg // 3600), int((seg % 3600) // 60)
+        tempo_str = f"{h}h {m}m"
         
         paginas = 0
         if 'Paginas_Turno' in df.columns:
             for item in df['Paginas_Turno']:
-                t = str(item).strip()
-                if t and t not in ["", "-"]: paginas += len([x for x in t.split(',') if x.strip()])
+                texto = str(item).strip()
+                if texto and texto not in ["", "-"]:
+                    lista = [x for x in texto.split(',') if x.strip()]
+                    paginas += len(lista)
         
         total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum() if 'Qtd_Total' in df.columns else 0
-        return f"{h}h {m}m", paginas, int(total_prod)
+        return tempo_str, paginas, int(total_prod)
     except: return "...", 0, 0
 
-# --- 4. LOGIN ---
+# --- 4. LÓGICA DE LOGIN (Início do App) ---
 cookie_manager = get_manager()
 cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
 
+# Se NÃO tem cookie E NÃO passou pelo login manual, mostra a tela de login
 if not cookie_usuario and not st.session_state.get('password_correct', False):
     st.title("🔒 Acesso Restrito")
     try: usuarios = st.secrets["passwords"]
-    except: st.error("Configure Secrets"); st.stop()
-    c1, c2 = st.columns([2,1])
-    with c1:
-        u = st.selectbox("Usuário", ["Selecione..."]+list(usuarios.keys()))
-        p = st.text_input("Senha", type="password")
-        if st.button("Entrar", type="primary"):
-            with st.spinner("..."):
-                if u!="Selecione..." and p==usuarios[u]:
-                    st.session_state['password_correct']=True
-                    st.session_state['usuario_logado']=u
-                    cookie_manager.set("usuario_associacao", u, expires_at=datetime.now()+pd.Timedelta(days=1))
-                    time.sleep(1); st.rerun()
-                else: st.error("Erro")
-    st.stop()
+    except: st.error("Configure os Secrets."); st.stop()
 
-if cookie_usuario: st.session_state['usuario_logado'] = cookie_usuario
+    col1, col2 = st.columns([2,1])
+    with col1:
+        user_input = st.selectbox("Usuário", ["Selecione..."] + list(usuarios.keys()))
+        pass_input = st.text_input("Senha", type="password")
+
+        if st.button("Entrar", type="primary"):
+            with st.spinner("Autenticando..."):
+                if user_input != "Selecione..." and pass_input == usuarios[user_input]:
+                    st.session_state['password_correct'] = True
+                    st.session_state['usuario_logado'] = user_input
+                    
+                    # Salva Cookie com validade de 1 dia
+                    cookie_manager.set("usuario_associacao", user_input, expires_at=datetime.now() + timedelta(days=1))
+                    
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Dados incorretos.")
+    st.stop() # Para o código aqui se não estiver logado
+
+# Se tem cookie, recupera a sessão
+if cookie_usuario:
+    st.session_state['usuario_logado'] = cookie_usuario
+
 usuario = st.session_state['usuario_logado'].title()
 
-# --- 5. SIDEBAR ---
+# --- 5. BARRA LATERAL ---
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
+    
+    # --- LOGOUT NUCLEAR (RESOLVE O PROBLEMA DE VEZ) ---
     if st.button("Sair / Logout"):
-        with st.spinner("Saindo..."):
-            try: cookie_manager.delete("usuario_associacao"); cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
+        with st.spinner("Desconectando com segurança..."):
+            # 1. Substitui o cookie por vazio e expira ele IMEDIATAMENTE (no passado)
+            cookie_manager.set("usuario_associacao", "", expires_at=datetime.now() - timedelta(days=1))
+            
+            # 2. Tenta deletar explicitamente (garantia extra)
+            try: cookie_manager.delete("usuario_associacao")
             except: pass
-            for k in list(st.session_state.keys()): del st.session_state[k]
-            time.sleep(3); st.rerun()
-    st.divider()
-    st.markdown("### 📊 Hoje")
-    if 'resumo_dia' not in st.session_state: st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
-    t, p, prod = st.session_state['resumo_dia']
-    st.metric("Tempo", t); c1, c2 = st.columns(2); c1.metric("Pags", p); c2.metric("Prods", prod)
-    if st.button("Atualizar"): 
-        with st.spinner("."): st.session_state['resumo_dia'] = calcular_resumo_diario(usuario); st.rerun()
-    st.divider()
-    if st.button("🔄 Sites"): carregar_lista_sites.clear(); st.rerun()
+            
+            # 3. Limpa toda a memória da sessão do Python
+            st.session_state.clear()
+            
+            # 4. Espera o navegador processar a morte do cookie
+            time.sleep(2)
+            
+            # 5. Recarrega a página (vai cair na tela de login obrigatoriamente)
+            st.rerun()
 
-# --- 6. SISTEMA ---
+    st.divider()
+    st.markdown("### 📊 Produção Hoje")
+    
+    if 'resumo_dia' not in st.session_state:
+        with st.spinner("Calculando..."):
+            st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+    
+    t, p, prod = st.session_state['resumo_dia']
+    
+    st.metric("⏱ Tempo", t)
+    c_pag, c_prod = st.columns(2)
+    c_pag.metric("📄 Pags", p)
+    c_prod.metric("📦 Prods", prod)
+    
+    if st.button("Atualizar Métricas"):
+        with st.spinner("Recalculando..."):
+            st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+            st.rerun()
+    
+    st.divider()
+    if st.button("🔄 Atualizar Lista Sites"):
+        with st.spinner("Baixando sites..."):
+            carregar_lista_sites.clear()
+            st.rerun()
+
+# --- 6. SISTEMA PRINCIPAL ---
 st.title("🔗 Controle de Progresso")
 
-with st.spinner("Carregando..."):
+with st.spinner("Carregando sistema..."):
     SITES = carregar_lista_sites()
     LETRAS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+# Trava seleção se estiver trabalhando
 disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
 
 c1, c2 = st.columns(2)
@@ -230,11 +275,13 @@ else:
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
 
+# SELETOR DE PÁGINAS (CHECKLIST)
 sel_agora = []
 if st.session_state.status == "TRABALHANDO" and tot_pg and faltam:
     st.markdown("### 📝 Marque o que você concluiu:")
     sel_agora = st.multiselect("Selecione as páginas:", options=faltam)
 
+# --- BOTÕES ---
 b1, b2, b3 = st.columns(3)
 
 if st.session_state.status == "PARADO":
@@ -243,7 +290,6 @@ if st.session_state.status == "PARADO":
         if b1.button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
                 if st.session_state.get('mem_tot') is None:
-                    # CORREÇÃO AQUI: Passando 'usuario' corretamente
                     salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
                     st.session_state.mem_tot = tot_pg
                     st.session_state.mem_ult = qtd_ultima
@@ -259,7 +305,6 @@ elif st.session_state.status == "TRABALHANDO":
         with st.spinner("Salvando..."):
             if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
                 if sel_agora:
-                    # CORREÇÃO AQUI TAMBÉM
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
@@ -273,7 +318,6 @@ elif st.session_state.status == "TRABALHANDO":
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
             with st.spinner("Finalizando..."):
                 if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
-                    # CORREÇÃO AQUI TAMBÉM
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
