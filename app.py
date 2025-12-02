@@ -34,12 +34,30 @@ def carregar_lista_sites():
         sheet = client.open("Sistema_Associacao").worksheet("cadastro_varreduras")
         dados = sheet.get_all_records()
         df = pd.DataFrame(dados)
+        
+        lista_sites = []
+        regras_exclusao = {}
+
         if not df.empty and 'Cliente' in df.columns:
-            df = df[df['Cliente'] != '']
-            lista = (df['Cliente'] + " - " + df['Concorrente']).tolist()
-            return sorted(lista)
-        return []
-    except: return []
+            for index, row in df.iterrows():
+                if row['Cliente'] != '':
+                    # Monta o nome
+                    nome_completo = f"{row['Cliente']} - {row['Concorrente']}"
+                    lista_sites.append(nome_completo)
+                    
+                    # Verifica se tem letras para deletar
+                    letras_proibidas = []
+                    if 'Delete_Letras' in df.columns:
+                        texto_delete = str(row['Delete_Letras']).upper().strip()
+                        if texto_delete:
+                            # Quebra por vírgula caso tenha mais de uma (ex: "G, H")
+                            letras_proibidas = [l.strip() for l in texto_delete.split(',') if l.strip()]
+                    
+                    regras_exclusao[nome_completo] = letras_proibidas
+
+            return sorted(lista_sites), regras_exclusao
+        return [], {}
+    except: return [], {}
 
 def buscar_status_paginas(site, letra):
     """Retorna: (Total, Lista Feitas, Qtd Ultima)"""
@@ -238,15 +256,25 @@ with st.sidebar:
 st.title("🔗 Controle de Progresso")
 
 with st.spinner("Carregando sistema..."):
-    SITES = carregar_lista_sites()
-    LETRAS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    # Agora desempacota: Lista de Nomes E Regras de Exclusão
+    SITES, REGRAS_EXCLUSAO = carregar_lista_sites()
 
 # Trava seleção se estiver trabalhando
 disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
 
 c1, c2 = st.columns(2)
-with c1: site = st.selectbox("Site", SITES, disabled=disabled_sel)
-with c2: letra = st.selectbox("Letra", LETRAS, disabled=disabled_sel)
+with c1: 
+    site = st.selectbox("Site / Projeto", SITES, disabled=disabled_sel)
+
+# --- LÓGICA DE FILTRO DE LETRAS ---
+# Pega as letras proibidas para este site específico
+proibidas = REGRAS_EXCLUSAO.get(site, [])
+todas_letras = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+# Cria a lista final removendo as proibidas
+letras_permitidas = [l for l in todas_letras if l not in proibidas]
+
+with c2: 
+    letra = st.selectbox("Letra / Lote", letras_permitidas, disabled=disabled_sel)
 
 chave = f"{site}_{letra}"
 if st.session_state.get('last_sel') != chave and not disabled_sel:
@@ -354,3 +382,4 @@ if tot_pg is not None:
             status_icon = "✅" if i in paginas_visuais else "⬜"
             dados_tabela.append({"Pág": i, "Status": status_icon})
         st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, hide_index=True, height=200)
+
