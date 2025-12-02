@@ -206,26 +206,16 @@ if cookie_usuario:
 
 usuario = st.session_state['usuario_logado'].title()
 
-# --- 5. BARRA LATERAL ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
-    # LOGOUT NUCLEAR
     if st.button("Sair / Logout"):
         with st.spinner("Desconectando..."):
-            try: 
-                cookie_manager.delete("usuario_associacao")
+            try: cookie_manager.delete("usuario_associacao"); cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
             except: pass
-            
-            try:
-                cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
-            except: pass
-            
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            
-            time.sleep(3) # Tempo aumentado para garantir
-            st.rerun()
+            for k in list(st.session_state.keys()): del st.session_state[k]
+            time.sleep(3); st.rerun()
 
     st.divider()
     st.markdown("### 📊 Produção Hoje")
@@ -249,7 +239,8 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Atualizar Lista Sites"):
         with st.spinner("Baixando sites..."):
-            carregar_lista_sites.clear()
+            # CORREÇÃO AQUI: Chamando a função _v2
+            carregar_lista_sites_v2.clear()
             st.rerun()
 
 # --- 6. SISTEMA PRINCIPAL ---
@@ -382,5 +373,6 @@ if tot_pg is not None:
             status_icon = "✅" if i in paginas_visuais else "⬜"
             dados_tabela.append({"Pág": i, "Status": status_icon})
         st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, hide_index=True, height=200)
+
 
 
