@@ -79,6 +79,50 @@ def buscar_status_paginas(site, letra):
         return None, [], 100
     except: return None, [], 100
 
+# --- FUNÇÃO NOVA: TABELA GERAL (A-Z) ---
+def exibir_resumo_geral(site_atual, regras_exclusao):
+    try:
+        client = get_client_google()
+        sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
+        # Pega todos os dados de uma vez para ser rápido
+        all_records = sheet.get_all_records()
+        df = pd.DataFrame(all_records)
+
+        # Cria um dicionário das letras que JÁ existem no banco: {'A': 10, 'B': 8}
+        cadastradas = {}
+        if not df.empty and 'Site' in df.columns:
+            # Filtra só o site atual
+            df_site = df[df['Site'] == site_atual]
+            for _, row in df_site.iterrows():
+                cadastradas[str(row['Letra']).strip()] = row['Qtd_Paginas']
+
+        # Pega a lista de letras proibidas (Delete_Letras)
+        bloqueadas = regras_exclusao.get(site_atual, [])
+
+        # Monta a tabela
+        dados_tabela = []
+        for letra in list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+            if letra in bloqueadas:
+                status = "🚫 Inexistente"
+            elif letra in cadastradas:
+                qtd = cadastradas[letra]
+                status = f"✅ {qtd} págs"
+            else:
+                status = "🟡 A Cadastrar"
+
+            dados_tabela.append({"Letra": letra, "Cadastro": status})
+
+        # Exibe na tela
+        st.markdown("### 🔠 Visão Geral (A-Z)")
+        st.dataframe(
+            pd.DataFrame(dados_tabela),
+            use_container_width=True,
+            hide_index=True,
+            height=300 # Altura fixa com rolagem
+        )
+    except:
+        st.error("Erro ao carregar resumo geral.")
+
 # --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
 def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
     try:
@@ -362,17 +406,22 @@ elif st.session_state.status == "PAUSADO":
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
-# --- MAPA DA LETRA NA SIDEBAR ---
-if tot_pg is not None:
-    with st.sidebar:
-        st.divider()
-        st.markdown("### 🗺️ Mapa")
-        dados_tabela = []
+# --- MAPA E VISÃO GERAL NA SIDEBAR ---
+with st.sidebar:
+    st.divider()
+    
+    # 1. O Mapa da Letra Atual (Só aparece se a letra estiver cadastrada)
+    if tot_pg is not None:
+        st.markdown(f"### 🗺️ Mapa da Letra {letra}")
+        dados_mapa = []
         paginas_visuais = set(feitas_pg + sel_agora)
         for i in range(1, tot_pg + 1):
             status_icon = "✅" if i in paginas_visuais else "⬜"
-            dados_tabela.append({"Pág": i, "Status": status_icon})
-        st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, hide_index=True, height=200)
-
-
-
+            dados_mapa.append({"Pág": i, "Status": status_icon})
+        st.dataframe(pd.DataFrame(dados_mapa), use_container_width=True, hide_index=True, height=150)
+    
+    st.divider()
+    
+    # 2. A Nova Tabela Geral (A-Z)
+    # Passamos o site selecionado e as regras carregadas no início
+    exibir_resumo_geral(site, REGRAS_EXCLUSAO)
