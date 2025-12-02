@@ -188,32 +188,51 @@ def calcular_resumo_diario(usuario):
         df = pd.DataFrame(sheet.get_all_records())
         if df.empty: return "0h 0m", 0, 0
         
+        # Filtra Usuário e Data
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
         if df.empty: return "0h 0m", 0, 0
         
-        # 1. Soma Tempo (Apenas PAUSA e FIM)
-        df_produtivo = df[df['Acao'].isin(['PAUSA', 'FIM'])]
-        seg = df_produtivo['Tempo_Decorrido'].sum() if 'Tempo_Decorrido' in df_produtivo.columns else 0
+        # --- 1. SOMA DO TEMPO (CORREÇÃO DE TIPO) ---
+        seg = 0
+        if 'Tempo_Decorrido' in df.columns:
+            # Força conversão para números (texto vira número, erro vira 0)
+            coluna_numerica = pd.to_numeric(df['Tempo_Decorrido'], errors='coerce').fillna(0)
+            
+            # Filtra apenas as linhas de PAUSA e FIM nessa coluna numérica
+            # (Precisamos alinhar o índice para filtrar certo)
+            mask_produtivo = df['Acao'].isin(['PAUSA', 'FIM'])
+            seg = coluna_numerica[mask_produtivo].sum()
+            
         h, m = int(seg // 3600), int((seg % 3600) // 60)
         tempo_str = f"{h}h {m}m"
         
-        # 2. Soma Páginas (Coluna Paginas_Turno)
+        # --- 2. SOMA DE PÁGINAS ---
         paginas = 0
+        # Tenta achar 'Paginas_Turno' ou usa a última coluna como fallback
         if 'Paginas_Turno' in df.columns:
-            for item in df['Paginas_Turno']:
-                texto = str(item).strip()
-                if texto and texto not in ["", "-"]:
-                    lista = [x for x in texto.split(',') if x.strip()]
-                    paginas += len(lista)
+            col_alvo = df['Paginas_Turno']
+        else:
+            col_alvo = df.iloc[:, -1]
+
+        for item in col_alvo:
+            texto = str(item).strip()
+            if texto and texto not in ["", "-"] and any(c.isdigit() for c in texto):
+                lista = [x for x in texto.split(',') if x.strip()]
+                paginas += len(lista)
         
-        # 3. Soma Produtos (Coluna Qtd_Total)
-        total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum() if 'Qtd_Total' in df.columns else 0
-        
+        # --- 3. SOMA DE PRODUTOS ---
+        total_prod = 0
+        if 'Qtd_Total' in df.columns:
+            total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum()
+            
         return tempo_str, paginas, int(total_prod)
-    except: return "...", 0, 0
+        
+    except Exception as e: 
+        print(f"Erro no resumo: {e}")
+        return "...", 0, 0
 
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
@@ -425,3 +444,4 @@ with st.sidebar:
     # 2. A Nova Tabela Geral (A-Z)
     # Passamos o site selecionado e as regras carregadas no início
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
