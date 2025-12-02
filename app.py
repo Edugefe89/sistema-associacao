@@ -71,7 +71,10 @@ def buscar_status_paginas(site, letra):
             res = df[df['Chave'].astype(str).str.strip() == chave]
             if not res.empty:
                 total = int(res.iloc[0]['Qtd_Paginas'])
-                feitas_str = str(res.iloc[0]['Paginas_Concluidas'])
+                
+                # CORREÇÃO DE LEITURA: Remove o apóstrofo se houver
+                feitas_str = str(res.iloc[0]['Paginas_Concluidas']).replace("'", "")
+                
                 feitas = [int(x) for x in feitas_str.split(',') if x.strip().isdigit()] if feitas_str else []
                 try: qtd_ultima = int(res.iloc[0]['Qtd_Ultima_Pag'])
                 except: qtd_ultima = 100
@@ -132,10 +135,11 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_n
         
         lista_completa = sorted(list(set(ja_feitas + novas_paginas_feitas)))
         
-        # FAXINA DE DADOS (Remove páginas maiores que o total, ex: 2003)
+        # FAXINA DE DADOS
         lista_limpa = [p for p in lista_completa if p <= int(total_paginas)]
         
-        texto_para_salvar = ", ".join(map(str, lista_limpa))
+        # CORREÇÃO DE ESCRITA: Adiciona o apóstrofo para forçar Texto no Sheets
+        texto_para_salvar = "'" + ", ".join(map(str, lista_limpa))
         
         chave_busca = f"{site} | {letra}".strip()
         cell = sheet.find(chave_busca)
@@ -144,7 +148,7 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_n
             sheet.update_cell(cell.row, 5, texto_para_salvar)
             sheet.update_cell(cell.row, 4, total_paginas)
             sheet.update_cell(cell.row, 6, qtd_ultima_pag)
-            sheet.update_cell(cell.row, 7, usuario_nome) # Salva Responsável
+            sheet.update_cell(cell.row, 7, usuario_nome)
         else:
             sheet.append_row([chave_busca, site, letra, total_paginas, texto_para_salvar, qtd_ultima_pag, usuario_nome])
     except: pass
@@ -444,4 +448,5 @@ with st.sidebar:
     # 2. A Nova Tabela Geral (A-Z)
     # Passamos o site selecionado e as regras carregadas no início
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
