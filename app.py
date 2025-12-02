@@ -26,9 +26,9 @@ def get_client_google():
         st.error(f"Erro de Conexão Google: {e}")
         return None
 
-# --- 3. FUNÇÕES DE DADOS (COM CACHE) ---
+# Mudei o nome para 'carregar_lista_sites_v2' para forçar atualização do Cache
 @st.cache_data(ttl=300)
-def carregar_lista_sites():
+def carregar_lista_sites_v2():
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("cadastro_varreduras")
@@ -58,7 +58,7 @@ def carregar_lista_sites():
             return sorted(lista_sites), regras_exclusao
         return [], {}
     except: return [], {}
-
+        
 def buscar_status_paginas(site, letra):
     """Retorna: (Total, Lista Feitas, Qtd Ultima)"""
     try:
@@ -256,8 +256,8 @@ with st.sidebar:
 st.title("🔗 Controle de Progresso")
 
 with st.spinner("Carregando sistema..."):
-    # Agora desempacota: Lista de Nomes E Regras de Exclusão
-    SITES, REGRAS_EXCLUSAO = carregar_lista_sites()
+    # Chamando a função nova V2
+    SITES, REGRAS_EXCLUSAO = carregar_lista_sites_v2()
 
 # Trava seleção se estiver trabalhando
 disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
@@ -382,4 +382,5 @@ if tot_pg is not None:
             status_icon = "✅" if i in paginas_visuais else "⬜"
             dados_tabela.append({"Pág": i, "Status": status_icon})
         st.dataframe(pd.DataFrame(dados_tabela), use_container_width=True, hide_index=True, height=200)
+
 
