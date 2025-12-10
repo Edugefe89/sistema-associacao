@@ -338,25 +338,32 @@ with st.sidebar:
 st.title("🔗 Controle de Progresso")
 
 with st.spinner("Carregando sistema..."):
-    # Chamando a função nova V2
-    SITES, REGRAS_EXCLUSAO = carregar_lista_sites_v2()
+    # Carrega a lista do banco
+    SITES_DO_BANCO, REGRAS_EXCLUSAO = carregar_lista_sites_v2()
+    # TRAVA 1: Adiciona a opção de bloqueio no topo da lista
+    SITES = ["Selecione..."] + SITES_DO_BANCO
+    LETRAS_PADRAO = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-# Trava seleção se estiver trabalhando
+# Trava visual se estiver trabalhando
 disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
 
 c1, c2 = st.columns(2)
 with c1: 
     site = st.selectbox("Site / Projeto", SITES, disabled=disabled_sel)
 
-# --- LÓGICA DE FILTRO DE LETRAS ---
-# Pega as letras proibidas para este site específico
-proibidas = REGRAS_EXCLUSAO.get(site, [])
-todas_letras = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-# Cria a lista final removendo as proibidas
-letras_permitidas = [l for l in todas_letras if l not in proibidas]
+# --- TRAVA DE SEGURANÇA (NUCLEAR) ---
+# Se o usuário não mudar a opção, o sistema MORRE aqui. Nada abaixo acontece.
+if site == "Selecione...":
+    st.info("⬅️ Selecione um Cliente/Concorrente acima para liberar o sistema.")
+    st.stop() # <--- AQUI ESTÁ A TRANCA
+# -------------------------------------
+
+# --- FILTRO DE LETRAS ---
+letras_proibidas = REGRAS_EXCLUSAO.get(site, [])
+letras_finais = [l for l in LETRAS_PADRAO if l not in letras_proibidas]
 
 with c2: 
-    letra = st.selectbox("Letra / Lote", letras_permitidas, disabled=disabled_sel)
+    letra = st.selectbox("Letra", letras_finais, disabled=disabled_sel)
 
 chave = f"{site}_{letra}"
 if st.session_state.get('last_sel') != chave and not disabled_sel:
@@ -406,7 +413,6 @@ if st.session_state.status == "PARADO":
         if b1.button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
                 if st.session_state.get('mem_tot') is None:
-                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
                     st.session_state.mem_tot = tot_pg
                     st.session_state.mem_ult = qtd_ultima
@@ -422,7 +428,6 @@ elif st.session_state.status == "TRABALHANDO":
         with st.spinner("Salvando..."):
             if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
                 if sel_agora:
-                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
@@ -436,7 +441,6 @@ elif st.session_state.status == "TRABALHANDO":
         if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
             with st.spinner("Finalizando..."):
                 if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
-                    # CORREÇÃO APLICADA AQUI: Adicionado 'usuario'
                     salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                     st.session_state.mem_feit += sel_agora
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
@@ -453,12 +457,10 @@ elif st.session_state.status == "PAUSADO":
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
-# --- MAPA E VISÃO GERAL NA SIDEBAR ---
-with st.sidebar:
-    st.divider()
-    
-    # 1. O Mapa da Letra Atual (Só aparece se a letra estiver cadastrada)
-    if tot_pg is not None:
+# --- MAPA DA LETRA NA SIDEBAR ---
+if tot_pg is not None:
+    with st.sidebar:
+        st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
         dados_mapa = []
         paginas_visuais = set(feitas_pg + sel_agora)
@@ -467,11 +469,6 @@ with st.sidebar:
             dados_mapa.append({"Pág": i, "Status": status_icon})
         st.dataframe(pd.DataFrame(dados_mapa), use_container_width=True, hide_index=True, height=150)
     
-    st.divider()
-    
-    # 2. A Nova Tabela Geral (A-Z)
-    # Passamos o site selecionado e as regras carregadas no início
-    exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
-
-
+    with st.sidebar:
+        st.divider()
+        exibir_resumo_geral(site, REGRAS_EXCLUSAO)
