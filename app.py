@@ -398,19 +398,17 @@ else:
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
 
-# SELETOR DE PÁGINAS (CHECKLIST)
-sel_agora = []
-if st.session_state.status == "TRABALHANDO" and tot_pg and faltam:
-    st.markdown("### 📝 Marque o que você concluiu:")
-    sel_agora = st.multiselect("Selecione as páginas:", options=faltam)
+# --- LÓGICA DE BOTÕES E FORMULÁRIO ---
 
-# --- BOTÕES ---
-b1, b2, b3 = st.columns(3)
-
+# CENÁRIO 1: PARADO (Botão Solto)
 if st.session_state.status == "PARADO":
+    # Seletor de checklist só aparece para enfeite ou consulta, mas a ação é iniciar
     if not bloq_total:
+        c_btn = st.columns(3)
         txt_btn = "▶️ RETOMAR" if feitas_pg else "▶️ INICIAR"
-        if b1.button(txt_btn, type="primary", use_container_width=True):
+        
+        # Botão solto com Spinner (Padrão)
+        if c_btn[0].button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
                 if st.session_state.get('mem_tot') is None:
                     salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
@@ -423,35 +421,56 @@ if st.session_state.status == "PARADO":
                     st.rerun()
     else: st.info("Selecione outra letra.")
 
+# CENÁRIO 2: TRABALHANDO (Formulário Blindado)
 elif st.session_state.status == "TRABALHANDO":
-    if b2.button("⏸ PAUSAR (Sair)", use_container_width=True):
-        with st.spinner("Salvando..."):
-            if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
-                if sel_agora:
-                    salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
-                    st.session_state.mem_feit += sel_agora
-                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
-                st.session_state.status = "PARADO"
-                st.rerun()
     
-    comp = False
-    if faltam and len(sel_agora) == len(faltam): comp = True
-    
-    if comp:
-        if b3.button("✅ FINALIZAR", type="primary", use_container_width=True):
-            with st.spinner("Finalizando..."):
-                if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
-                    salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
-                    st.session_state.mem_feit += sel_agora
-                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
-                    st.session_state.status = "PARADO"
-                    st.balloons(); time.sleep(2); st.rerun()
-    else:
-        b3.markdown(f"<div style='text-align:center; color:gray; font-size:12px; padding-top:10px;'>Faltam {len(faltam)} pgs</div>", unsafe_allow_html=True)
+    # CRIA UM FORMULÁRIO PARA TRAVAR RECARGAS DESNECESSÁRIAS
+    with st.form(key="form_trabalho", clear_on_submit=False):
+        st.markdown("### 📝 Marque o que você concluiu:")
+        # Agora ele pode marcar várias caixas sem o sistema recarregar
+        sel_agora = st.multiselect("Selecione as páginas:", options=faltam)
+        
+        st.write("") # Espaço
+        
+        c_form1, c_form2 = st.columns(2)
+        
+        # Botão 1 do Formulário: PAUSAR
+        submit_pause = c_form1.form_submit_button("⏸ PAUSAR (Sair)", use_container_width=True)
+        
+        # Botão 2 do Formulário: FINALIZAR (Só habilita visualmente se completou tudo, mas a lógica checa depois)
+        # Nota: Em formulários, não dá pra desabilitar botão dinamicamente sem recarga, então checamos na lógica.
+        submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
 
+        # --- LÓGICA DO SUBMIT ---
+        if submit_pause:
+            with st.spinner("Salvando pausa..."):
+                if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
+                    if sel_agora:
+                        salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
+                        st.session_state.mem_feit += sel_agora
+                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+                    st.session_state.status = "PARADO"
+                    st.rerun()
+        
+        if submit_finish:
+            # Verifica se realmente completou tudo
+            if faltam and len(sel_agora) == len(faltam):
+                with st.spinner("Finalizando..."):
+                    if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
+                        salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
+                        st.session_state.mem_feit += sel_agora
+                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+                        st.session_state.status = "PARADO"
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+            else:
+                st.warning(f"⚠️ Você precisa marcar todas as {len(faltam)} páginas restantes para finalizar.")
+
+# CENÁRIO 3: PAUSADO (Botão Solto)
 elif st.session_state.status == "PAUSADO":
     st.warning("Pausado")
-    if b1.button("▶️ RETOMAR", type="primary", use_container_width=True):
+    if st.button("▶️ RETOMAR", type="primary", use_container_width=True):
         with st.spinner("Retomando..."):
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, [], qtd_ultima):
                 st.session_state.status = "TRABALHANDO"
@@ -472,3 +491,4 @@ if tot_pg is not None:
     with st.sidebar:
         st.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
