@@ -87,41 +87,48 @@ def exibir_resumo_geral(site_atual, regras_exclusao):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
-        # Pega todos os dados de uma vez para ser rápido
         all_records = sheet.get_all_records()
         df = pd.DataFrame(all_records)
 
-        # Cria um dicionário das letras que JÁ existem no banco: {'A': 10, 'B': 8}
+        # Dicionário agora guarda tupla: (Qtd_Total, Qtd_Feitas)
         cadastradas = {}
         if not df.empty and 'Site' in df.columns:
-            # Filtra só o site atual
             df_site = df[df['Site'] == site_atual]
             for _, row in df_site.iterrows():
-                cadastradas[str(row['Letra']).strip()] = row['Qtd_Paginas']
+                total = int(row['Qtd_Paginas'])
+                
+                # Conta quantas vírgulas tem na lista de concluídas
+                feitas_str = str(row['Paginas_Concluidas']).replace("'", "").strip()
+                if feitas_str and any(c.isdigit() for c in feitas_str):
+                    qtd_feitas = len([x for x in feitas_str.split(',') if x.strip()])
+                else:
+                    qtd_feitas = 0
+                    
+                cadastradas[str(row['Letra']).strip()] = (total, qtd_feitas)
 
-        # Pega a lista de letras proibidas (Delete_Letras)
         bloqueadas = regras_exclusao.get(site_atual, [])
 
-        # Monta a tabela
         dados_tabela = []
         for letra in list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
             if letra in bloqueadas:
                 status = "🚫 Inexistente"
             elif letra in cadastradas:
-                qtd = cadastradas[letra]
-                status = f"✅ {qtd} págs"
+                total, feitas = cadastradas[letra]
+                if feitas >= total:
+                    status = "✅ Concluída"
+                else:
+                    status = f"📊 {feitas}/{total} Feitas"
             else:
                 status = "🟡 A Cadastrar"
 
-            dados_tabela.append({"Letra": letra, "Cadastro": status})
+            dados_tabela.append({"Letra": letra, "Progresso": status})
 
-        # Exibe na tela
         st.markdown("### 🔠 Visão Geral (A-Z)")
         st.dataframe(
             pd.DataFrame(dados_tabela),
             use_container_width=True,
             hide_index=True,
-            height=300 # Altura fixa com rolagem
+            height=300
         )
     except:
         st.error("Erro ao carregar resumo geral.")
@@ -157,6 +164,27 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
     try:
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
+        
+        # --- TRAVA DE SEGURANÇA (NOVA) ---
+        # Verifica a última ação deste usuário para evitar duplicidade
+        todos_logs = sheet.get_all_records()
+        df_log = pd.DataFrame(todos_logs)
+        
+        if not df_log.empty and 'Operador' in df_log.columns and 'Acao' in df_log.columns:
+            # Filtra pelo operador atual
+            logs_usuario = df_log[df_log['Operador'] == operador]
+            
+            if not logs_usuario.empty:
+                # Pega a última ação registrada
+                ultima_acao = logs_usuario.iloc[-1]['Acao']
+                
+                # Se tentar fazer a mesma coisa 2x seguidas, bloqueia (exceto se for mudar de site/letra)
+                # Mas para simplificar: Pausa seguida de Pausa ou Retomada seguida de Retomada é proibido.
+                if acao == ultima_acao:
+                    return True # Retorna True fingindo que salvou, para o app seguir, mas não suja o banco
+        
+        # --- FIM DA TRAVA ---
+
         fuso = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso)
         
@@ -192,21 +220,21 @@ def calcular_resumo_diario(usuario):
         df = pd.DataFrame(sheet.get_all_records())
         if df.empty: return "0h 0m", 0, 0
         
-        # Filtra Usuário e Data
         df = df[df['Operador'] == usuario]
         hoje = datetime.now(pytz.timezone('America/Sao_Paulo')).strftime("%d/%m/%Y")
         df = df[df['Data_Hora'].astype(str).str.startswith(hoje)]
         
         if df.empty: return "0h 0m", 0, 0
         
-        # --- 1. SOMA DO TEMPO (CORREÇÃO DE TIPO) ---
+        # --- 1. SOMA DO TEMPO (COM LIMPEZA DE DADOS) ---
         seg = 0
         if 'Tempo_Decorrido' in df.columns:
-            # Força conversão para números (texto vira número, erro vira 0)
-            coluna_numerica = pd.to_numeric(df['Tempo_Decorrido'], errors='coerce').fillna(0)
+            # Converte coluna para string, troca vírgula por ponto (caso Sheets esteja em PT-BR)
+            # e converte para numero. Erros viram 0.
+            coluna_limpa = df['Tempo_Decorrido'].astype(str).str.replace(',', '.')
+            coluna_numerica = pd.to_numeric(coluna_limpa, errors='coerce').fillna(0)
             
-            # Filtra apenas as linhas de PAUSA e FIM nessa coluna numérica
-            # (Precisamos alinhar o índice para filtrar certo)
+            # Filtra apenas PAUSA e FIM
             mask_produtivo = df['Acao'].isin(['PAUSA', 'FIM'])
             seg = coluna_numerica[mask_produtivo].sum()
             
@@ -215,17 +243,15 @@ def calcular_resumo_diario(usuario):
         
         # --- 2. SOMA DE PÁGINAS ---
         paginas = 0
-        # Tenta achar 'Paginas_Turno' ou usa a última coluna como fallback
         if 'Paginas_Turno' in df.columns:
-            col_alvo = df['Paginas_Turno']
-        else:
-            col_alvo = df.iloc[:, -1]
-
-        for item in col_alvo:
-            texto = str(item).strip()
-            if texto and texto not in ["", "-"] and any(c.isdigit() for c in texto):
-                lista = [x for x in texto.split(',') if x.strip()]
-                paginas += len(lista)
+            for item in df['Paginas_Turno']:
+                texto = str(item).strip()
+                # Verifica se tem números e não é só um traço ou aspas vazias
+                if texto and any(c.isdigit() for c in texto):
+                    # Remove aspas simples se houver (correção anterior)
+                    texto = texto.replace("'", "")
+                    lista = [x for x in texto.split(',') if x.strip()]
+                    paginas += len(lista)
         
         # --- 3. SOMA DE PRODUTOS ---
         total_prod = 0
@@ -233,11 +259,9 @@ def calcular_resumo_diario(usuario):
             total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum()
             
         return tempo_str, paginas, int(total_prod)
-        
     except Exception as e: 
-        print(f"Erro no resumo: {e}")
+        print(f"Erro Timer: {e}")
         return "...", 0, 0
-
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
 cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
@@ -448,5 +472,6 @@ with st.sidebar:
     # 2. A Nova Tabela Geral (A-Z)
     # Passamos o site selecionado e as regras carregadas no início
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
