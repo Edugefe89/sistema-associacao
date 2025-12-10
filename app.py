@@ -398,16 +398,17 @@ else:
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
 
+# --- CORREÇÃO: INICIALIZA A VARIÁVEL AQUI PARA NÃO DAR ERRO ---
+sel_agora = [] 
+
 # --- LÓGICA DE BOTÕES E FORMULÁRIO ---
 
 # CENÁRIO 1: PARADO (Botão Solto)
 if st.session_state.status == "PARADO":
-    # Seletor de checklist só aparece para enfeite ou consulta, mas a ação é iniciar
     if not bloq_total:
         c_btn = st.columns(3)
         txt_btn = "▶️ RETOMAR" if feitas_pg else "▶️ INICIAR"
         
-        # Botão solto com Spinner (Padrão)
         if c_btn[0].button(txt_btn, type="primary", use_container_width=True):
             with st.spinner("Iniciando..."):
                 if st.session_state.get('mem_tot') is None:
@@ -424,24 +425,16 @@ if st.session_state.status == "PARADO":
 # CENÁRIO 2: TRABALHANDO (Formulário Blindado)
 elif st.session_state.status == "TRABALHANDO":
     
-    # CRIA UM FORMULÁRIO PARA TRAVAR RECARGAS DESNECESSÁRIAS
     with st.form(key="form_trabalho", clear_on_submit=False):
         st.markdown("### 📝 Marque o que você concluiu:")
-        # Agora ele pode marcar várias caixas sem o sistema recarregar
         sel_agora = st.multiselect("Selecione as páginas:", options=faltam)
         
-        st.write("") # Espaço
+        st.write("") 
         
         c_form1, c_form2 = st.columns(2)
-        
-        # Botão 1 do Formulário: PAUSAR
         submit_pause = c_form1.form_submit_button("⏸ PAUSAR (Sair)", use_container_width=True)
-        
-        # Botão 2 do Formulário: FINALIZAR (Só habilita visualmente se completou tudo, mas a lógica checa depois)
-        # Nota: Em formulários, não dá pra desabilitar botão dinamicamente sem recarga, então checamos na lógica.
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
 
-        # --- LÓGICA DO SUBMIT ---
         if submit_pause:
             with st.spinner("Salvando pausa..."):
                 if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
@@ -453,7 +446,6 @@ elif st.session_state.status == "TRABALHANDO":
                     st.rerun()
         
         if submit_finish:
-            # Verifica se realmente completou tudo
             if faltam and len(sel_agora) == len(faltam):
                 with st.spinner("Finalizando..."):
                     if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
@@ -482,6 +474,7 @@ if tot_pg is not None:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
         dados_mapa = []
+        # Garante que sel_agora existe (foi iniciado lá em cima)
         paginas_visuais = set(feitas_pg + sel_agora)
         for i in range(1, tot_pg + 1):
             status_icon = "✅" if i in paginas_visuais else "⬜"
@@ -491,4 +484,5 @@ if tot_pg is not None:
     with st.sidebar:
         st.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
