@@ -494,14 +494,6 @@ elif st.session_state.status == "PAUSADO":
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
-Sim, exatamente! Você vai apagar o código antigo que estava abaixo de # --- MAPA DA LETRA NA SIDEBAR --- e substituir por este novo bloco.
-
-Este código deve ficar dentro do if tot_pg is not None: e dentro do with st.sidebar:.
-
-Aqui está o bloco completo, pronto para copiar e colar no lugar certo:
-
-Python
-
 # --- MAPA DA LETRA NA SIDEBAR ---
 if tot_pg is not None:
     with st.sidebar:
