@@ -9,6 +9,12 @@ import pytz
 import extra_streamlit_components as stx
 from streamlit_gsheets import GSheetsConnection
 
+try:
+    email_robo = st.secrets["gsheets"]["service_account_info"]["client_email"]
+    st.error(f"⚠️ COPIE ESTE E-MAIL E DÊ PERMISSÃO DE EDITOR NA PLANILHA: {email_robo}")
+except:
+    st.error("Não consegui ler o e-mail nos secrets.")
+
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema de Associação", page_icon="🔗")
 
@@ -608,3 +614,4 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
