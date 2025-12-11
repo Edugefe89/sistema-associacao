@@ -230,7 +230,6 @@ def calcular_resumo_diario(usuario):
         seg = 0
         if 'Tempo_Decorrido' in df.columns:
             # Converte coluna para string, troca vírgula por ponto (caso Sheets esteja em PT-BR)
-            # e converte para numero. Erros viram 0.
             coluna_limpa = df['Tempo_Decorrido'].astype(str).str.replace(',', '.')
             coluna_numerica = pd.to_numeric(coluna_limpa, errors='coerce').fillna(0)
             
@@ -246,17 +245,20 @@ def calcular_resumo_diario(usuario):
         if 'Paginas_Turno' in df.columns:
             for item in df['Paginas_Turno']:
                 texto = str(item).strip()
-                # Verifica se tem números e não é só um traço ou aspas vazias
                 if texto and any(c.isdigit() for c in texto):
-                    # Remove aspas simples se houver (correção anterior)
                     texto = texto.replace("'", "")
                     lista = [x for x in texto.split(',') if x.strip()]
                     paginas += len(lista)
         
-        # --- 3. SOMA DE PRODUTOS ---
+        # --- 3. SOMA DE PRODUTOS (CORREÇÃO APLICADA AQUI) ---
         total_prod = 0
         if 'Qtd_Total' in df.columns:
-            total_prod = pd.to_numeric(df['Qtd_Total'], errors='coerce').fillna(0).sum()
+            # Pega a coluna, transforma em texto, TIRA O PONTO e converte para número
+            # Ex: "6.481" vira "6481" | "999" vira "999"
+            col_prod_limpa = df['Qtd_Total'].astype(str).str.replace('.', '', regex=False)
+            
+            # Converte para numérico e soma
+            total_prod = pd.to_numeric(col_prod_limpa, errors='coerce').fillna(0).sum()
             
         return tempo_str, paginas, int(total_prod)
     except Exception as e: 
@@ -484,5 +486,6 @@ if tot_pg is not None:
     with st.sidebar:
         st.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
