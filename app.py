@@ -560,7 +560,7 @@ if tot_pg is not None:
             column_config={
                 "Pág": st.column_config.NumberColumn("Página", disabled=True, format="%d", width="small"),
                 "Status": st.column_config.TextColumn("Status", disabled=True, width="small"),
-                "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
+                "Selecionar": st.column_config.CheckboxColumn("Checkbox", default=False, width="small"),
                 "bloqueado": None
             },
             disabled=["Pág", "Status", "bloqueado"],
@@ -615,4 +615,5 @@ if tot_pg is not None:
         st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
