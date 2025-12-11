@@ -13,18 +13,17 @@ from streamlit_gsheets import GSheetsConnection
 def get_manager():
     return stx.CookieManager()
 
-# --- 2. CONEXÃO GOOGLE SHEETS (CORRIGIDA) ---
+# --- 2. CONEXÃO GOOGLE SHEETS (COM CACHE DE RECURSO) ---
+@st.cache_resource
 def get_client_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # --- CORREÇÃO: Busca no novo local "connections.gsheets" ---
+        # Busca no novo local correto
         creds_dict = dict(st.secrets["connections"]["gsheets"])
-        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"⚠️ ERRO DE CONEXÃO NO GET_CLIENT: {e}")
+        st.error(f"⚠️ Erro de Conexão: {e}")
         return None
 
 # Mudei o nome para 'carregar_lista_sites_v2' para forçar atualização do Cache
@@ -615,6 +614,7 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
