@@ -165,34 +165,43 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
-        # --- TRAVA DE SEGURANÇA (NOVA) ---
-        # Verifica a última ação deste usuário para evitar duplicidade
+        # --- TRAVA DE SEGURANÇA (MANTIDA) ---
         todos_logs = sheet.get_all_records()
         df_log = pd.DataFrame(todos_logs)
         
         if not df_log.empty and 'Operador' in df_log.columns and 'Acao' in df_log.columns:
-            # Filtra pelo operador atual
             logs_usuario = df_log[df_log['Operador'] == operador]
-            
             if not logs_usuario.empty:
-                # Pega a última ação registrada
                 ultima_acao = logs_usuario.iloc[-1]['Acao']
-                
-                # Se tentar fazer a mesma coisa 2x seguidas, bloqueia (exceto se for mudar de site/letra)
-                # Mas para simplificar: Pausa seguida de Pausa ou Retomada seguida de Retomada é proibido.
+                # Evita duplicidade de clique (ex: Pausa seguida de Pausa)
                 if acao == ultima_acao:
-                    return True # Retorna True fingindo que salvou, para o app seguir, mas não suja o banco
-        
+                    return True 
         # --- FIM DA TRAVA ---
 
         fuso = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso)
         
         tempo = 0
-        if acao != "INICIO" and 'ultimo_timestamp' in st.session_state:
-            tempo = int((agora - st.session_state['ultimo_timestamp']).total_seconds())
         
-        if acao in ["INICIO", "RETOMADA"]: st.session_state['ultimo_timestamp'] = agora
+        # --- LÓGICA DE TEMPO CORRIGIDA ---
+        # INICIO ou RETOMADA: Resetam o relógio. Tempo registrado é 0.
+        if acao in ["INICIO", "RETOMADA"]:
+            st.session_state['ultimo_timestamp'] = agora
+            tempo = 0
+            
+        # PAUSA ou FIM: Calculam o tempo desde o último marco
+        elif acao in ["PAUSA", "FIM"]:
+            if 'ultimo_timestamp' in st.session_state:
+                delta = agora - st.session_state['ultimo_timestamp']
+                tempo = int(delta.total_seconds())
+                
+                # Opcional: Se por algum milagre o clique foi muito rápido e deu 0, 
+                # mas você quer garantir registro, pode forçar 1s. 
+                # Mas matematicamente o correto é a diferença real.
+            else:
+                # Se perdeu a sessão (F5 na página), tenta salvar sem tempo ou assume 0
+                tempo = 0
+
         if 'id_sessao' not in st.session_state: st.session_state.id_sessao = str(uuid.uuid4())
         
         str_novas = ", ".join(map(str, novas)) if novas else "-"
@@ -210,7 +219,9 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         ]
         sheet.append_row(nova_linha)
         return True
-    except: return False
+    except Exception as e: 
+        print(f"Erro ao logar: {e}")
+        return False
 
 def calcular_resumo_diario(usuario):
     """Calcula tempo PRODUTIVO e páginas feitas hoje"""
@@ -486,6 +497,7 @@ if tot_pg is not None:
     with st.sidebar:
         st.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
