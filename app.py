@@ -9,9 +9,7 @@ import pytz
 import extra_streamlit_components as stx
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. GERENCIADOR DE COOKIES ---
-def get_manager():
-    return stx.CookieManager()
+# --- 0. FUNÇÕES DE CACHE E CONEXÃO ---
 
 # --- 2. CONEXÃO GOOGLE SHEETS (COM CACHE DE RECURSO) ---
 @st.cache_resource
@@ -25,6 +23,23 @@ def get_client_google():
     except Exception as e:
         st.error(f"⚠️ Erro de Conexão: {e}")
         return None
+
+def forcar_atualizacao_mapa():
+    """Lê o banco e salva na memória do usuário (Session State)"""
+    try:
+        client = get_client_google()
+        # Lê a aba sem cache (para garantir dado fresco NO MOMENTO DO EVENTO)
+        sheet = client.open("Sistema_Associacao").worksheet("acompanhamento_paginas")
+        dados = sheet.get_all_records()
+        df = pd.DataFrame(dados)
+        # Salva no estado da sessão
+        st.session_state['dados_mapa_cache'] = df
+    except:
+        st.session_state['dados_mapa_cache'] = pd.DataFrame()
+
+# --- 1. GERENCIADOR DE COOKIES ---
+def get_manager():
+    return stx.CookieManager()
 
 # Mudei o nome para 'carregar_lista_sites_v2' para forçar atualização do Cache
 @st.cache_data(ttl=300)
@@ -146,7 +161,8 @@ def exibir_resumo_geral(site_atual, regras_exclusao):
         )
     except Exception as e:
         st.error(f"Erro visual: {e}")
-# --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
+
+# --- FUNÇÕES DE SALVAMENTO E LOG ---
 def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
     try:
         client = get_client_google()
@@ -178,7 +194,7 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
-        # --- TRAVA DE SEGURANÇA (MANTIDA) ---
+        # --- TRAVA DE SEGURANÇA ---
         todos_logs = sheet.get_all_records()
         df_log = pd.DataFrame(todos_logs)
         
@@ -186,7 +202,7 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
             logs_usuario = df_log[df_log['Operador'] == operador]
             if not logs_usuario.empty:
                 ultima_acao = logs_usuario.iloc[-1]['Acao']
-                # Evita duplicidade de clique (ex: Pausa seguida de Pausa)
+                # Evita duplicidade de clique
                 if acao == ultima_acao:
                     return True 
         # --- FIM DA TRAVA ---
@@ -196,23 +212,16 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         
         tempo = 0
         
-        # --- LÓGICA DE TEMPO CORRIGIDA ---
-        # INICIO ou RETOMADA: Resetam o relógio. Tempo registrado é 0.
+        # --- LÓGICA DE TEMPO ---
         if acao in ["INICIO", "RETOMADA"]:
             st.session_state['ultimo_timestamp'] = agora
             tempo = 0
             
-        # PAUSA ou FIM: Calculam o tempo desde o último marco
         elif acao in ["PAUSA", "FIM"]:
             if 'ultimo_timestamp' in st.session_state:
                 delta = agora - st.session_state['ultimo_timestamp']
                 tempo = int(delta.total_seconds())
-                
-                # Opcional: Se por algum milagre o clique foi muito rápido e deu 0, 
-                # mas você quer garantir registro, pode forçar 1s. 
-                # Mas matematicamente o correto é a diferença real.
             else:
-                # Se perdeu a sessão (F5 na página), tenta salvar sem tempo ou assume 0
                 tempo = 0
 
         if 'id_sessao' not in st.session_state: st.session_state.id_sessao = str(uuid.uuid4())
@@ -250,14 +259,12 @@ def calcular_resumo_diario(usuario):
         
         if df.empty: return "0h 0m", 0, 0
         
-        # --- 1. SOMA DO TEMPO (COM LIMPEZA DE DADOS) ---
+        # --- 1. SOMA DO TEMPO ---
         seg = 0
         if 'Tempo_Decorrido' in df.columns:
-            # Converte coluna para string, troca vírgula por ponto (caso Sheets esteja em PT-BR)
             coluna_limpa = df['Tempo_Decorrido'].astype(str).str.replace(',', '.')
             coluna_numerica = pd.to_numeric(coluna_limpa, errors='coerce').fillna(0)
             
-            # Filtra apenas PAUSA e FIM
             mask_produtivo = df['Acao'].isin(['PAUSA', 'FIM'])
             seg = coluna_numerica[mask_produtivo].sum()
             
@@ -274,20 +281,17 @@ def calcular_resumo_diario(usuario):
                     lista = [x for x in texto.split(',') if x.strip()]
                     paginas += len(lista)
         
-        # --- 3. SOMA DE PRODUTOS (CORREÇÃO APLICADA AQUI) ---
+        # --- 3. SOMA DE PRODUTOS ---
         total_prod = 0
         if 'Qtd_Total' in df.columns:
-            # Pega a coluna, transforma em texto, TIRA O PONTO e converte para número
-            # Ex: "6.481" vira "6481" | "999" vira "999"
             col_prod_limpa = df['Qtd_Total'].astype(str).str.replace('.', '', regex=False)
-            
-            # Converte para numérico e soma
             total_prod = pd.to_numeric(col_prod_limpa, errors='coerce').fillna(0).sum()
             
         return tempo_str, paginas, int(total_prod)
     except Exception as e: 
         print(f"Erro Timer: {e}")
         return "...", 0, 0
+
 # --- 4. LÓGICA DE LOGIN ---
 cookie_manager = get_manager()
 cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
@@ -323,7 +327,7 @@ if cookie_usuario:
 
 usuario = st.session_state['usuario_logado'].title()
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR (METRICAS) ---
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     
@@ -356,7 +360,6 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Atualizar Lista Sites"):
         with st.spinner("Baixando sites..."):
-            # CORREÇÃO AQUI: Chamando a função _v2
             carregar_lista_sites_v2.clear()
             st.rerun()
 
@@ -378,10 +381,9 @@ with c1:
     site = st.selectbox("Site / Projeto", SITES, disabled=disabled_sel)
 
 # --- TRAVA DE SEGURANÇA (NUCLEAR) ---
-# Se o usuário não mudar a opção, o sistema MORRE aqui. Nada abaixo acontece.
 if site == "Selecione...":
     st.info("⬅️ Selecione um Cliente/Concorrente acima para liberar o sistema.")
-    st.stop() # <--- AQUI ESTÁ A TRANCA
+    st.stop()
 # -------------------------------------
 
 # --- FILTRO DE LETRAS ---
@@ -392,13 +394,19 @@ with c2:
     letra = st.selectbox("Letra", letras_finais, disabled=disabled_sel)
 
 chave = f"{site}_{letra}"
+# --- GATILHO DE ATUALIZAÇÃO DO MAPA (TROCA DE LETRA) ---
 if st.session_state.get('last_sel') != chave and not disabled_sel:
-    with st.spinner("Histórico..."):
+    with st.spinner("Carregando histórico e mapa..."):
         tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
         st.session_state.mem_tot = tot
         st.session_state.mem_feit = feitas
         st.session_state.mem_ult = qtd_ult
+        
+        # IMPORTANTE: Atualiza o cache do mapa aqui para não dar erro 429
+        forcar_atualizacao_mapa()
+        
         st.session_state['last_sel'] = chave
+# -------------------------------------------------------
 
 tot_pg = st.session_state.get('mem_tot')
 feitas_pg = st.session_state.get('mem_feit', [])
@@ -424,12 +432,11 @@ else:
 st.divider()
 if 'status' not in st.session_state: st.session_state.status = "PARADO"
 
-# --- CORREÇÃO: INICIALIZA A VARIÁVEL AQUI PARA NÃO DAR ERRO ---
 sel_agora = [] 
 
 # --- LÓGICA DE BOTÕES E FORMULÁRIO ---
 
-# CENÁRIO 1: PARADO (Botão Solto)
+# CENÁRIO 1: PARADO
 if st.session_state.status == "PARADO":
     if not bloq_total:
         c_btn = st.columns(3)
@@ -442,13 +449,18 @@ if st.session_state.status == "PARADO":
                     st.session_state.mem_tot = tot_pg
                     st.session_state.mem_ult = qtd_ultima
                 if 'ultimo_timestamp' in st.session_state: del st.session_state['ultimo_timestamp']
+                
                 acao_log = "RETOMADA" if feitas_pg else "INICIO"
                 if registrar_log(usuario, site, letra, acao_log, tot_pg, [], qtd_ultima):
+                    
+                    # GATILHO IMPORTANTE: Atualiza o mapa ao começar
+                    forcar_atualizacao_mapa()
+                    
                     st.session_state.status = "TRABALHANDO"
                     st.rerun()
     else: st.info("Selecione outra letra.")
 
-# CENÁRIO 2: TRABALHANDO (Formulário Blindado)
+# CENÁRIO 2: TRABALHANDO
 elif st.session_state.status == "TRABALHANDO":
     
     with st.form(key="form_trabalho", clear_on_submit=False):
@@ -462,20 +474,14 @@ elif st.session_state.status == "TRABALHANDO":
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
 
         if submit_pause:
-            with st.spinner("Salvando e calculando..."): # Mudei o texto para indicar que demora um pouquinho
-                # Registra o LOG (tempo)
+            with st.spinner("Salvando e calculando..."): 
                 if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
-                    
-                    # Se tiver página feita, salva no banco de controle
                     if sel_agora:
                         salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                         st.session_state.mem_feit += sel_agora
                     
-                    # --- O SEGREDO ESTÁ AQUI ---
-                    time.sleep(2) # Espera 2 segundos para o Google Sheets processar a nova linha
-                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) # Força o recálculo
-                    # ---------------------------
-
+                    time.sleep(2) 
+                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
                     st.session_state.status = "PARADO"
                     st.rerun()
         
@@ -486,59 +492,59 @@ elif st.session_state.status == "TRABALHANDO":
                         salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                         st.session_state.mem_feit += sel_agora
                         
-                        # --- O SEGREDO ESTÁ AQUI ---
-                        time.sleep(2) # Espera o Google salvar
-                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) # Recalcula
-                        # ---------------------------
+                        time.sleep(2) 
+                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
                         
                         st.session_state.status = "PARADO"
                         st.balloons()
-                        time.sleep(1) # Espera um pouco para ver os balões
+                        time.sleep(1)
                         st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as {len(faltam)} páginas restantes para finalizar.")
 
-# CENÁRIO 3: PAUSADO (Botão Solto)
+# CENÁRIO 3: PAUSADO
 elif st.session_state.status == "PAUSADO":
     st.warning("Pausado")
     if st.button("▶️ RETOMAR", type="primary", use_container_width=True):
         with st.spinner("Retomando..."):
             if registrar_log(usuario, site, letra, "RETOMADA", tot_pg, [], qtd_ultima):
+                
+                # GATILHO IMPORTANTE: Atualiza o mapa ao retomar
+                forcar_atualizacao_mapa()
+                
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
-# --- MAPA DA LETRA NA SIDEBAR (Cole este bloco no lugar do antigo) ---
+# --- SIDEBAR: MAPA E RESUMO (OTIMIZADO) ---
 if tot_pg is not None:
     with st.sidebar:
         st.divider()
-        st.markdown(f"### 🗺️ Mapa da Letra {letra}")
+        c_mapa_titulo, c_mapa_refresh = st.columns([4,1])
+        c_mapa_titulo.markdown(f"### 🗺️ Mapa {letra}")
+        
+        # Botãozinho discreto para atualizar manualmente se ele quiser
+        if c_mapa_refresh.button("🔄", help="Atualizar mapa da equipe"):
+            forcar_atualizacao_mapa()
+            st.rerun()
 
-        # 1. CONEXÃO ROBUSTA (A mesma que já funciona no resto do app)
-        try:
-            client = get_client_google()
-            # Abre a planilha e a aba específica
-            sheet_acompanhamento = client.open("Sistema_Associacao").worksheet("acompanhamento_paginas")
+        # 1. LEITURA DA MEMÓRIA LOCAL (Zero consumo de cota)
+        # Se por acaso estiver vazio (primeira carga), força carregar
+        if 'dados_mapa_cache' not in st.session_state:
+            forcar_atualizacao_mapa()
             
-            # Pega todos os dados para ler
-            dados_bd = sheet_acompanhamento.get_all_records()
-            df_bd = pd.DataFrame(dados_bd)
-            
-            # Define a chave atual
-            chave_atual = f"{site} | {letra}"
+        df_bd = st.session_state['dados_mapa_cache']
+        
+        # Define a chave atual
+        chave_atual = f"{site} | {letra}"
 
-            # Filtra paginas em andamento deste cliente/letra
-            paginas_em_andamento_bd = set()
-            if not df_bd.empty and 'chave' in df_bd.columns and 'pagina' in df_bd.columns:
-                filtro = df_bd[
-                    (df_bd["chave"] == chave_atual) & 
-                    (df_bd["status"] == "Em andamento")
-                ]
-                paginas_em_andamento_bd = set(filtro["pagina"].astype(int).tolist())
-
-        except Exception as e:
-            st.error(f"Erro ao ler aba acompanhamento: {e}")
-            paginas_em_andamento_bd = set()
-            df_bd = pd.DataFrame() # Vazio para não quebrar
+        # Filtra na memória
+        paginas_em_andamento_bd = set()
+        if not df_bd.empty and 'chave' in df_bd.columns and 'pagina' in df_bd.columns:
+            filtro = df_bd[
+                (df_bd["chave"] == chave_atual) & 
+                (df_bd["status"] == "Em andamento")
+            ]
+            paginas_em_andamento_bd = set(filtro["pagina"].astype(int).tolist())
 
         # 2. MONTAR OS DADOS VISUAIS
         set_feitas = set(feitas_pg)
@@ -558,19 +564,19 @@ if tot_pg is not None:
         df_editado = st.data_editor(
             df_mapa,
             column_config={
-                "Pág": st.column_config.NumberColumn("Página", disabled=True, format="%d", width="small"),
-                "Status": st.column_config.TextColumn("Status", disabled=True, width="small"),
-                "Selecionar": st.column_config.CheckboxColumn("Checkbox", default=False, width="small"),
+                "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
+                "Status": st.column_config.TextColumn("Est.", disabled=True, width="small"),
+                "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
                 "bloqueado": None
             },
             disabled=["Pág", "Status", "bloqueado"],
             hide_index=True,
             use_container_width=True,
             height=300,
-            key=f"editor_gspread_{letra}"
+            key=f"editor_event_{letra}"
         )
 
-        # 4. LÓGICA DE SALVAMENTO (USANDO GSPREAD DIRETO)
+        # 4. GRAVAÇÃO (Essa precisa ir no Google, pois é uma AÇÃO do usuário)
         selecao_final = set(df_editado[
             (df_editado["Selecionar"] == True) & 
             (df_editado["bloqueado"] == False)
@@ -578,36 +584,34 @@ if tot_pg is not None:
 
         if selecao_final != paginas_em_andamento_bd:
             try:
-                # A) ADICIONAR NOVAS (Simples: append_row)
+                # Conecta APENAS para salvar
+                client = get_client_google()
+                sheet_acompanhamento = client.open("Sistema_Associacao").worksheet("acompanhamento_paginas")
+
+                # A) ADICIONAR NOVAS
                 novas = selecao_final - paginas_em_andamento_bd
                 for p in novas:
                     sheet_acompanhamento.append_row([chave_atual, letra, int(p), "Em andamento"])
 
-                # B) REMOVER DESMARCADAS (Complexo: achar a linha e deletar)
+                # B) REMOVER DESMARCADAS
                 removidas = paginas_em_andamento_bd - selecao_final
                 if removidas:
-                    # Recarrega dados frescos para garantir indices corretos
                     dados_atuais = sheet_acompanhamento.get_all_records()
-                    
-                    # Procura de trás para frente para não bagunçar indices ao deletar
-                    # (Lógica: deletar linha X muda o número de todas abaixo dela)
                     linhas_para_deletar = []
                     for idx, row in enumerate(dados_atuais):
-                        # Verifica se é a linha certa (Chave igual e Pagina está na lista de removidas)
                         if row['chave'] == chave_atual and int(row['pagina']) in removidas:
-                            linhas_para_deletar.append(idx + 2) # +2 porque get_all_records ignora header(1) e é 0-based
-
-                    # Deleta linha por linha (ordem decrescente)
+                            linhas_para_deletar.append(idx + 2) 
                     for l in sorted(linhas_para_deletar, reverse=True):
                         sheet_acompanhamento.delete_row(l)
 
+                # ATUALIZA A MEMÓRIA LOCAL IMEDIATAMENTE APÓS SALVAR
+                # Assim ele vê o "Amarelo" na hora sem precisar ler do Google de novo
+                forcar_atualizacao_mapa() 
                 st.rerun()
 
             except Exception as e:
-                # AGORA SIM VAMOS VER O ERRO REAL SE ACONTECER
-                st.error(f"Erro real ao salvar: {e}")
+                st.error(f"Erro ao salvar seleção: {e}")
 
-        # Variavel para uso global
         sel_agora = list(selecao_final)
 
     st.sidebar.divider()
@@ -615,5 +619,3 @@ if tot_pg is not None:
         st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
-
