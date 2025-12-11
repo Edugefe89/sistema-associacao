@@ -9,30 +9,22 @@ import pytz
 import extra_streamlit_components as stx
 from streamlit_gsheets import GSheetsConnection
 
-try:
-    email_robo = st.secrets["connections"]["gsheets"]["client_email"]
-    
-except:
-    st.error("Não consegui ler o e-mail nos secrets.")
-
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Sistema de Associação", page_icon="🔗")
-
 # --- 1. GERENCIADOR DE COOKIES ---
 def get_manager():
     return stx.CookieManager()
 
-# --- 2. CONEXÃO GOOGLE SHEETS ---
+# --- 2. CONEXÃO GOOGLE SHEETS (CORRIGIDA) ---
 def get_client_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
+        # --- CORREÇÃO: Busca no novo local "connections.gsheets" ---
         creds_dict = dict(st.secrets["connections"]["gsheets"])
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Erro de Conexão Google: {e}")
+        st.error(f"⚠️ ERRO DE CONEXÃO NO GET_CLIENT: {e}")
         return None
 
 # Mudei o nome para 'carregar_lista_sites_v2' para forçar atualização do Cache
@@ -40,6 +32,8 @@ def get_client_google():
 def carregar_lista_sites_v2():
     try:
         client = get_client_google()
+        if client is None: return [], {} # Se falhar a conexão, retorna vazio
+        
         sheet = client.open("Sistema_Associacao").worksheet("cadastro_varreduras")
         dados = sheet.get_all_records()
         df = pd.DataFrame(dados)
@@ -50,28 +44,29 @@ def carregar_lista_sites_v2():
         if not df.empty and 'Cliente' in df.columns:
             for index, row in df.iterrows():
                 if row['Cliente'] != '':
-                    # Monta o nome
                     nome_completo = f"{row['Cliente']} - {row['Concorrente']}"
                     lista_sites.append(nome_completo)
                     
-                    # Verifica se tem letras para deletar
                     letras_proibidas = []
                     if 'Delete_Letras' in df.columns:
                         texto_delete = str(row['Delete_Letras']).upper().strip()
                         if texto_delete:
-                            # Quebra por vírgula caso tenha mais de uma (ex: "G, H")
                             letras_proibidas = [l.strip() for l in texto_delete.split(',') if l.strip()]
                     
                     regras_exclusao[nome_completo] = letras_proibidas
 
             return sorted(lista_sites), regras_exclusao
         return [], {}
-    except: return [], {}
+    except Exception as e: 
+        st.error(f"Erro ao carregar sites: {e}")
+        return [], {}
         
 def buscar_status_paginas(site, letra):
     """Retorna: (Total, Lista Feitas, Qtd Ultima)"""
     try:
         client = get_client_google()
+        if client is None: return None, [], 100
+
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
         dados = sheet.get_all_records()
         df = pd.DataFrame(dados)
@@ -81,7 +76,6 @@ def buscar_status_paginas(site, letra):
             if not res.empty:
                 total = int(res.iloc[0]['Qtd_Paginas'])
                 
-                # CORREÇÃO DE LEITURA: Remove o apóstrofo se houver
                 feitas_str = str(res.iloc[0]['Paginas_Concluidas']).replace("'", "")
                 
                 feitas = [int(x) for x in feitas_str.split(',') if x.strip().isdigit()] if feitas_str else []
@@ -89,24 +83,28 @@ def buscar_status_paginas(site, letra):
                 except: qtd_ultima = 100
                 return total, feitas, qtd_ultima
         return None, [], 100
-    except: return None, [], 100
+    except Exception as e: 
+        # st.error(f"Erro busca status: {e}") # Descomente para debug
+        return None, [], 100
 
 # --- FUNÇÃO NOVA: TABELA GERAL (A-Z) ---
 def exibir_resumo_geral(site_atual, regras_exclusao):
     try:
         client = get_client_google()
+        if client is None:
+            st.error("⚠️ Falha de conexão: Verifique os Secrets.")
+            return
+
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
         all_records = sheet.get_all_records()
         df = pd.DataFrame(all_records)
 
-        # Dicionário agora guarda tupla: (Qtd_Total, Qtd_Feitas)
         cadastradas = {}
         if not df.empty and 'Site' in df.columns:
             df_site = df[df['Site'] == site_atual]
             for _, row in df_site.iterrows():
                 total = int(row['Qtd_Paginas'])
                 
-                # Conta quantas vírgulas tem na lista de concluídas
                 feitas_str = str(row['Paginas_Concluidas']).replace("'", "").strip()
                 if feitas_str and any(c.isdigit() for c in feitas_str):
                     qtd_feitas = len([x for x in feitas_str.split(',') if x.strip()])
@@ -139,8 +137,9 @@ def exibir_resumo_geral(site_atual, regras_exclusao):
             hide_index=True,
             height=300
         )
-    except:
-        st.error("Erro ao carregar resumo geral.")
+    except Exception as e:
+        # AQUI VAI MOSTRAR O ERRO REAL AGORA
+        st.error(f"Erro detalhado no resumo geral: {e}")
 
 # --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
 def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
@@ -616,6 +615,7 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
