@@ -449,25 +449,38 @@ elif st.session_state.status == "TRABALHANDO":
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
 
         if submit_pause:
-            with st.spinner("Salvando pausa..."):
+            with st.spinner("Salvando e calculando..."): # Mudei o texto para indicar que demora um pouquinho
+                # Registra o LOG (tempo)
                 if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
+                    
+                    # Se tiver página feita, salva no banco de controle
                     if sel_agora:
                         salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                         st.session_state.mem_feit += sel_agora
-                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+                    
+                    # --- O SEGREDO ESTÁ AQUI ---
+                    time.sleep(2) # Espera 2 segundos para o Google Sheets processar a nova linha
+                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) # Força o recálculo
+                    # ---------------------------
+
                     st.session_state.status = "PARADO"
                     st.rerun()
         
         if submit_finish:
             if faltam and len(sel_agora) == len(faltam):
-                with st.spinner("Finalizando..."):
+                with st.spinner("Finalizando e calculando..."):
                     if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
                         salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
                         st.session_state.mem_feit += sel_agora
-                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+                        
+                        # --- O SEGREDO ESTÁ AQUI ---
+                        time.sleep(2) # Espera o Google salvar
+                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) # Recalcula
+                        # ---------------------------
+                        
                         st.session_state.status = "PARADO"
                         st.balloons()
-                        time.sleep(2)
+                        time.sleep(1) # Espera um pouco para ver os balões
                         st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as {len(faltam)} páginas restantes para finalizar.")
@@ -497,6 +510,7 @@ if tot_pg is not None:
     with st.sidebar:
         st.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
