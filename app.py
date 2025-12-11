@@ -26,7 +26,9 @@ def get_manager():
 def get_client_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        creds_dict = dict(st.secrets["connections"]["gsheets"])
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
     except Exception as e:
@@ -614,5 +616,6 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
