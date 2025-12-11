@@ -494,79 +494,94 @@ elif st.session_state.status == "PAUSADO":
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
+Sim, exatamente! Você vai apagar o código antigo que estava abaixo de # --- MAPA DA LETRA NA SIDEBAR --- e substituir por este novo bloco.
+
+Este código deve ficar dentro do if tot_pg is not None: e dentro do with st.sidebar:.
+
+Aqui está o bloco completo, pronto para copiar e colar no lugar certo:
+
+Python
+
 # --- MAPA DA LETRA NA SIDEBAR ---
 if tot_pg is not None:
     with st.sidebar:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
+
+        # 1. INICIALIZAÇÃO DA MEMÓRIA (SESSION STATE)
+        # Garante que o Streamlit lembre dos cliques do estagiário mesmo recarregando a tela
+        chave_memoria = f"sel_agora_{letra}"
         
-        # 1. Preparar os dados
+        if chave_memoria not in st.session_state:
+            st.session_state[chave_memoria] = [] # Começa vazio
+        
+        # Recupera o que já foi clicado nesta sessão
+        set_agora = set(st.session_state[chave_memoria])
+        set_feitas = set(feitas_pg) # Páginas que já vieram prontas do seu sistema
+
+        # 2. MONTAR OS DADOS VISUAIS
         dados_mapa = []
-        set_feitas = set(feitas_pg)
-        set_agora = set(sel_agora)
-
         for i in range(1, tot_pg + 1):
-            ja_feita = i in set_feitas
-            esta_selecionada = i in set_agora
-            
-            # DEFINIÇÃO DOS ÍCONES E ESTADOS
-            if ja_feita:
-                icone = "✅"       # Concluído (Banco)
-                marcado = True
-                bloqueado = True
-            elif esta_selecionada:
-                icone = "🟡"       # Em andamento (Sessão atual)
-                marcado = True
-                bloqueado = False
+            if i in set_feitas:
+                # CASO: JÁ CONCLUÍDO (Travado)
+                dados_mapa.append({
+                    "Pág": i,
+                    "Status": "✅",
+                    "Selecionar": True,
+                    "bloqueado": True 
+                })
+            elif i in set_agora:
+                # CASO: EM ANDAMENTO (Selecionado agora)
+                dados_mapa.append({
+                    "Pág": i,
+                    "Status": "🟡",
+                    "Selecionar": True,
+                    "bloqueado": False
+                })
             else:
-                icone = ""         # A fazer
-                marcado = False
-                bloqueado = False
-
-            dados_mapa.append({
-                "Pág": i,
-                "Estado": icone,      # Coluna apenas visual
-                "Selecionar": marcado, # O Checkbox real
-                "bloqueado": bloqueado # Controle oculto
-            })
+                # CASO: LIVRE (Para fazer)
+                dados_mapa.append({
+                    "Pág": i,
+                    "Status": "",
+                    "Selecionar": False,
+                    "bloqueado": False
+                })
 
         df_mapa = pd.DataFrame(dados_mapa)
 
-        # 2. Exibir o Editor
+        # 3. EXIBIR A TABELA CLICÁVEL
         df_editado = st.data_editor(
             df_mapa,
             column_config={
                 "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
-                "Estado": st.column_config.TextColumn("Est.", disabled=True, width="small"), # Visual (não editável)
-                "Selecionar": st.column_config.CheckboxColumn(
-                    "Ação",
-                    help="Marque para colocar em andamento",
-                    default=False,
-                    width="small"
-                ),
-                "bloqueado": None # Oculto
+                "Status": st.column_config.TextColumn("Est.", disabled=True, width="small"),
+                "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
+                "bloqueado": None # Coluna invisível
             },
-            disabled=["Pág", "Estado", "bloqueado"], # Garante que só o Checkbox seja mexido
+            disabled=["Pág", "Status", "bloqueado"], # Trava tudo menos o checkbox
             hide_index=True,
             use_container_width=True,
-            height=300,
-            key=f"editor_mapa_{letra}"
+            height=300, # Altura da tabela
+            key=f"editor_{letra}" # Chave única para não dar erro entre letras
         )
 
-        # 3. Lógica de Salvamento Inteligente
-        # Recalcula 'sel_agora' ignorando o que já era 'bloqueado' (Concluído do banco)
-        # O estagiário só consegue afetar o que NÃO estava bloqueado.
-        
-        sel_agora = df_editado[
+        # 4. PROCESSAR O CLIQUE (ATUALIZAR MEMÓRIA)
+        # Filtra apenas o que está marcado E que não estava bloqueado
+        novas_selecoes = df_editado[
             (df_editado["Selecionar"] == True) & 
             (df_editado["bloqueado"] == False)
         ]["Pág"].tolist()
 
-    # Exibição do resumo
+        # Se houve mudança no que o estagiário clicou, atualiza a memória e recarrega
+        if set(novas_selecoes) != set_agora:
+            st.session_state[chave_memoria] = novas_selecoes
+            st.rerun()
+
+        # Atualiza a variável global que seu código usa lá embaixo
+        sel_agora = st.session_state[chave_memoria]
+
+    # --- FIM DO BLOCO DO MAPA ---
+    
+    # Mantém o resumo geral que você já tinha
     st.sidebar.divider()
-    
-    # Feedback visual rápido
-    if sel_agora:
-        st.sidebar.warning(f"🟡 Em andamento agora: {len(sel_agora)} pgs")
-    
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
