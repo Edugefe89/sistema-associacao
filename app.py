@@ -500,7 +500,7 @@ if tot_pg is not None:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
         
-        # 1. Preparar os dados para o Editor
+        # 1. Preparar os dados
         dados_mapa = []
         set_feitas = set(feitas_pg)
         set_agora = set(sel_agora)
@@ -509,58 +509,64 @@ if tot_pg is not None:
             ja_feita = i in set_feitas
             esta_selecionada = i in set_agora
             
-            # Lógica: Se já foi feita OU está selecionada agora, o checkbox fica marcado
-            marcado = True if (ja_feita or esta_selecionada) else False
-            
-            # Bloqueio: Só bloqueia se já veio pronta do banco de dados (ja_feita)
-            bloqueado = True if ja_feita else False
+            # DEFINIÇÃO DOS ÍCONES E ESTADOS
+            if ja_feita:
+                icone = "✅"       # Concluído (Banco)
+                marcado = True
+                bloqueado = True
+            elif esta_selecionada:
+                icone = "🟡"       # Em andamento (Sessão atual)
+                marcado = True
+                bloqueado = False
+            else:
+                icone = ""         # A fazer
+                marcado = False
+                bloqueado = False
 
             dados_mapa.append({
                 "Pág": i,
-                "Status": marcado,    # Checkbox
-                "bloqueado": bloqueado # Coluna de controle oculta
+                "Estado": icone,      # Coluna apenas visual
+                "Selecionar": marcado, # O Checkbox real
+                "bloqueado": bloqueado # Controle oculto
             })
 
         df_mapa = pd.DataFrame(dados_mapa)
 
-        # 2. Exibir o Data Editor interativo
-        # O data_editor retorna o dataframe modificado pelo usuário
+        # 2. Exibir o Editor
         df_editado = st.data_editor(
             df_mapa,
             column_config={
-                "Pág": st.column_config.NumberColumn("Pág", disabled=True, format="%d"),
-                "Status": st.column_config.CheckboxColumn(
-                    "Status",
+                "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
+                "Estado": st.column_config.TextColumn("Est.", disabled=True, width="small"), # Visual (não editável)
+                "Selecionar": st.column_config.CheckboxColumn(
+                    "Ação",
                     help="Marque para colocar em andamento",
-                    default=False
+                    default=False,
+                    width="small"
                 ),
-                "bloqueado": None # Oculta esta coluna da visão do usuário
+                "bloqueado": None # Oculto
             },
-            disabled=["Pág", "bloqueado"], # Impede edição manual dessas colunas (mas respeita a config de linha do disabled_rows se usasse, aqui usamos a logica reversa)
-            # Truque: Streamlit ainda não tem disabled por linha nativo perfeito, 
-            # então usamos a coluna oculta para filtrar depois ou reverter, 
-            # MAS a melhor forma nativa atual é configurar a coluna Status como editável
-            # e instruir visualmente.
-            # *Melhoria:* Vamos usar a propriedade `disabled` baseada na coluna oculta se sua versão do Streamlit for recente,
-            # caso contrário, usamos a lógica de recuperação abaixo.
+            disabled=["Pág", "Estado", "bloqueado"], # Garante que só o Checkbox seja mexido
             hide_index=True,
             use_container_width=True,
-            height=250,
-            key=f"editor_mapa_{letra}" # Chave única para não conflitar
+            height=300,
+            key=f"editor_mapa_{letra}"
         )
 
-        # 3. Recalcular 'sel_agora' baseado no que o usuário clicou
-        # Filtramos apenas as que estão marcadas (Status=True) E que NÃO estavam bloqueadas originalmente
+        # 3. Lógica de Salvamento Inteligente
+        # Recalcula 'sel_agora' ignorando o que já era 'bloqueado' (Concluído do banco)
+        # O estagiário só consegue afetar o que NÃO estava bloqueado.
+        
         sel_agora = df_editado[
-            (df_editado["Status"] == True) & 
+            (df_editado["Selecionar"] == True) & 
             (df_editado["bloqueado"] == False)
         ]["Pág"].tolist()
 
     # Exibição do resumo
     st.sidebar.divider()
     
-    # Opcional: Mostrar quantos foram selecionados agora para confirmação visual
+    # Feedback visual rápido
     if sel_agora:
-        st.sidebar.info(f"Em andamento: {len(sel_agora)} páginas selecionadas.")
-        
+        st.sidebar.warning(f"🟡 Em andamento agora: {len(sel_agora)} pgs")
+    
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
