@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import uuid
 import pytz
 import extra_streamlit_components as stx
+from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema de Associação", page_icon="🔗")
@@ -500,80 +501,102 @@ if tot_pg is not None:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
 
-        # 1. INICIALIZAÇÃO DA MEMÓRIA (SESSION STATE)
-        # Garante que o Streamlit lembre dos cliques do estagiário mesmo recarregando a tela
-        chave_memoria = f"sel_agora_{letra}"
+        # 1. CONFIGURAÇÃO E LEITURA DO BANCO (Google Sheets)
+        conn = st.connection("gsheets", type=GSheetsConnection)
         
-        if chave_memoria not in st.session_state:
-            st.session_state[chave_memoria] = [] # Começa vazio
-        
-        # Recupera o que já foi clicado nesta sessão
-        set_agora = set(st.session_state[chave_memoria])
-        set_feitas = set(feitas_pg) # Páginas que já vieram prontas do seu sistema
+        # Define a chave única que identifica este trabalho
+        chave_atual = f"{site} | {letra}" 
 
+        # LÊ a planilha 'acompanhamento_paginas'
+        # ttl=0 garante que não tenha cache (pega dados frescos)
+        try:
+            df_bd = conn.read(worksheet="acompanhamento_paginas", ttl=0)
+            
+            # Filtra apenas o que é DESTE cliente e DESTA letra e está "Em andamento"
+            # Certifique-se que os nomes das colunas na planilha estão iguais aqui (chave, status, pagina)
+            filtro_bd = df_bd[
+                (df_bd["chave"] == chave_atual) & 
+                (df_bd["status"] == "Em andamento")
+            ]
+            paginas_em_andamento_bd = set(filtro_bd["pagina"].astype(int).tolist())
+            
+        except Exception as e:
+            st.error("Erro ao ler planilha. Verifique se a aba 'acompanhamento_paginas' existe.")
+            paginas_em_andamento_bd = set()
+            df_bd = pd.DataFrame(columns=["chave", "letra", "pagina", "status"]) # Cria vazio se falhar
+
+        # Prepara listas de comparação
+        set_feitas = set(feitas_pg) # Vindas do seu controle (Finalizadas)
+        
         # 2. MONTAR OS DADOS VISUAIS
         dados_mapa = []
         for i in range(1, tot_pg + 1):
             if i in set_feitas:
-                # CASO: JÁ CONCLUÍDO (Travado)
-                dados_mapa.append({
-                    "Pág": i,
-                    "Status": "✅",
-                    "Selecionar": True,
-                    "bloqueado": True 
-                })
-            elif i in set_agora:
-                # CASO: EM ANDAMENTO (Selecionado agora)
-                dados_mapa.append({
-                    "Pág": i,
-                    "Status": "🟡",
-                    "Selecionar": True,
-                    "bloqueado": False
-                })
+                # CONCLUÍDO (Travado)
+                dados_mapa.append({"Pág": i, "Status": "✅", "Selecionar": True, "bloqueado": True})
+            elif i in paginas_em_andamento_bd:
+                # EM ANDAMENTO (Vindo do Sheets)
+                dados_mapa.append({"Pág": i, "Status": "🟡", "Selecionar": True, "bloqueado": False})
             else:
-                # CASO: LIVRE (Para fazer)
-                dados_mapa.append({
-                    "Pág": i,
-                    "Status": "",
-                    "Selecionar": False,
-                    "bloqueado": False
-                })
+                # LIVRE
+                dados_mapa.append({"Pág": i, "Status": "", "Selecionar": False, "bloqueado": False})
 
         df_mapa = pd.DataFrame(dados_mapa)
 
-        # 3. EXIBIR A TABELA CLICÁVEL
+        # 3. EXIBIR TABELA
         df_editado = st.data_editor(
             df_mapa,
             column_config={
                 "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
                 "Status": st.column_config.TextColumn("Est.", disabled=True, width="small"),
                 "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
-                "bloqueado": None # Coluna invisível
+                "bloqueado": None
             },
-            disabled=["Pág", "Status", "bloqueado"], # Trava tudo menos o checkbox
+            disabled=["Pág", "Status", "bloqueado"],
             hide_index=True,
             use_container_width=True,
-            height=300, # Altura da tabela
-            key=f"editor_{letra}" # Chave única para não dar erro entre letras
+            height=300,
+            key=f"editor_bd_{letra}"
         )
 
-        # 4. PROCESSAR O CLIQUE (ATUALIZAR MEMÓRIA)
-        # Filtra apenas o que está marcado E que não estava bloqueado
-        novas_selecoes = df_editado[
+        # 4. LÓGICA DE GRAVAÇÃO NO SHEETS (A Mágica)
+        # Identifica o estado final desejado pelo usuário
+        selecao_final_usuario = set(df_editado[
             (df_editado["Selecionar"] == True) & 
             (df_editado["bloqueado"] == False)
-        ]["Pág"].tolist()
+        ]["Pág"].tolist())
 
-        # Se houve mudança no que o estagiário clicou, atualiza a memória e recarrega
-        if set(novas_selecoes) != set_agora:
-            st.session_state[chave_memoria] = novas_selecoes
+        # Verifica se houve mudança em relação ao que veio do banco
+        if selecao_final_usuario != paginas_em_andamento_bd:
+            
+            # A) O que foi MARCADO agora (Novo) -> Adicionar no Sheets
+            novas = selecao_final_usuario - paginas_em_andamento_bd
+            for p in novas:
+                nova_linha = pd.DataFrame([{
+                    "chave": chave_atual,
+                    "letra": letra,
+                    "pagina": p,
+                    "status": "Em andamento"
+                }])
+                df_bd = pd.concat([df_bd, nova_linha], ignore_index=True)
+
+            # B) O que foi DESMARCADO agora -> Remover do Sheets
+            removidas = paginas_em_andamento_bd - selecao_final_usuario
+            if removidas:
+                # Remove as linhas que batem com a chave e a página removida
+                df_bd = df_bd[~((df_bd["chave"] == chave_atual) & (df_bd["pagina"].isin(removidas)))]
+
+            # C) Atualiza a planilha INTEIRA com as mudanças
+            conn.update(worksheet="acompanhamento_paginas", data=df_bd)
+            
+            # Recarrega a tela para atualizar os ícones
             st.rerun()
 
-        # Atualiza a variável global que seu código usa lá embaixo
-        sel_agora = st.session_state[chave_memoria]
+        # Define a variável para uso no resto do código
+        sel_agora = list(selecao_final_usuario)
 
-    # --- FIM DO BLOCO DO MAPA ---
-    
-    # Mantém o resumo geral que você já tinha
     st.sidebar.divider()
+    if sel_agora:
+        st.sidebar.warning(f"Salvando no banco: {sel_agora}")
+        
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
