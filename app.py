@@ -495,7 +495,7 @@ elif st.session_state.status == "PAUSADO":
                 st.session_state.status = "TRABALHANDO"
                 st.rerun()
 
-# --- MAPA DA LETRA NA SIDEBAR ---
+# --- MAPA DA LETRA NA SIDEBAR (Cole este bloco no lugar do antigo) ---
 if tot_pg is not None:
     with st.sidebar:
         st.divider()
@@ -512,8 +512,12 @@ if tot_pg is not None:
         try:
             df_bd = conn.read(worksheet="acompanhamento_paginas", ttl=0)
             
+            # Garante que as colunas existem para evitar erro de Key Error se a planilha estiver vazia
+            colunas_esperadas = ["chave", "letra", "pagina", "status"]
+            if not all(col in df_bd.columns for col in colunas_esperadas):
+                 df_bd = pd.DataFrame(columns=colunas_esperadas)
+
             # Filtra apenas o que é DESTE cliente e DESTA letra e está "Em andamento"
-            # Certifique-se que os nomes das colunas na planilha estão iguais aqui (chave, status, pagina)
             filtro_bd = df_bd[
                 (df_bd["chave"] == chave_atual) & 
                 (df_bd["status"] == "Em andamento")
@@ -521,9 +525,10 @@ if tot_pg is not None:
             paginas_em_andamento_bd = set(filtro_bd["pagina"].astype(int).tolist())
             
         except Exception as e:
-            st.error("Erro ao ler planilha. Verifique se a aba 'acompanhamento_paginas' existe.")
+            # Se a aba não existir ou der erro grave, assumimos vazio para não travar o app
+            # st.error(f"Aviso: Criando conexão inicial. Detalhe: {e}") # Descomente se quiser ver o erro
             paginas_em_andamento_bd = set()
-            df_bd = pd.DataFrame(columns=["chave", "letra", "pagina", "status"]) # Cria vazio se falhar
+            df_bd = pd.DataFrame(columns=["chave", "letra", "pagina", "status"])
 
         # Prepara listas de comparação
         set_feitas = set(feitas_pg) # Vindas do seu controle (Finalizadas)
@@ -532,10 +537,10 @@ if tot_pg is not None:
         dados_mapa = []
         for i in range(1, tot_pg + 1):
             if i in set_feitas:
-                # CONCLUÍDO (Travado)
+                # CONCLUÍDO (Travado - Vem do Banco de Dados Principal)
                 dados_mapa.append({"Pág": i, "Status": "✅", "Selecionar": True, "bloqueado": True})
             elif i in paginas_em_andamento_bd:
-                # EM ANDAMENTO (Vindo do Sheets)
+                # EM ANDAMENTO (Vindo do Sheets - Monitoramento Equipe)
                 dados_mapa.append({"Pág": i, "Status": "🟡", "Selecionar": True, "bloqueado": False})
             else:
                 # LIVRE
@@ -559,7 +564,7 @@ if tot_pg is not None:
             key=f"editor_bd_{letra}"
         )
 
-        # 4. LÓGICA DE GRAVAÇÃO NO SHEETS (A Mágica)
+        # 4. LÓGICA DE GRAVAÇÃO NO SHEETS
         # Identifica o estado final desejado pelo usuário
         selecao_final_usuario = set(df_editado[
             (df_editado["Selecionar"] == True) & 
@@ -578,25 +583,28 @@ if tot_pg is not None:
                     "pagina": p,
                     "status": "Em andamento"
                 }])
+                # pd.concat é a forma moderna de adicionar linhas
                 df_bd = pd.concat([df_bd, nova_linha], ignore_index=True)
 
             # B) O que foi DESMARCADO agora -> Remover do Sheets
             removidas = paginas_em_andamento_bd - selecao_final_usuario
             if removidas:
                 # Remove as linhas que batem com a chave e a página removida
+                # A lógica é: Mantenha tudo que NÃO SEJA (chave atual E pagina removida)
                 df_bd = df_bd[~((df_bd["chave"] == chave_atual) & (df_bd["pagina"].isin(removidas)))]
 
             # C) Atualiza a planilha INTEIRA com as mudanças
-            conn.update(worksheet="acompanhamento_paginas", data=df_bd)
-            
-            # Recarrega a tela para atualizar os ícones
-            st.rerun()
+            try:
+                conn.update(worksheet="acompanhamento_paginas", data=df_bd)
+                st.rerun() # Recarrega a tela para atualizar os ícones
+            except Exception as e:
+                st.error("Erro ao salvar. Verifique se o robô tem permissão de EDITOR na planilha.")
 
         # Define a variável para uso no resto do código
         sel_agora = list(selecao_final_usuario)
 
     st.sidebar.divider()
     if sel_agora:
-        st.sidebar.warning(f"Salvando no banco: {sel_agora}")
+        st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
