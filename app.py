@@ -87,29 +87,37 @@ def buscar_status_paginas(site, letra):
         return None, [], 100
 
 # --- FUNÇÃO NOVA: TABELA GERAL (A-Z) ---
-def exibir_resumo_geral(site_atual, regras_exclusao):
+@st.cache_data(ttl=600) 
+def carregar_dados_resumo_geral():
     try:
         client = get_client_google()
-        if client is None:
-            st.error("⚠️ Falha de conexão: Verifique os Secrets.")
-            return
-
+        if client is None: return None
+        
         sheet = client.open("Sistema_Associacao").worksheet("Controle_Paginas")
-        all_records = sheet.get_all_records()
-        df = pd.DataFrame(all_records)
+        return pd.DataFrame(sheet.get_all_records())
+    except: return None
 
+# --- FUNÇÃO VISUAL: APENAS EXIBE (SEM GASTAR COTA) ---
+def exibir_resumo_geral(site_atual, regras_exclusao):
+    df = carregar_dados_resumo_geral() # Pega da memória, não do Google
+    
+    if df is None or df.empty:
+        st.warning("Carregando dados...")
+        return
+
+    try:
         cadastradas = {}
-        if not df.empty and 'Site' in df.columns:
+        if 'Site' in df.columns:
             df_site = df[df['Site'] == site_atual]
             for _, row in df_site.iterrows():
                 total = int(row['Qtd_Paginas'])
-                
+                # Limpeza e contagem
                 feitas_str = str(row['Paginas_Concluidas']).replace("'", "").strip()
                 if feitas_str and any(c.isdigit() for c in feitas_str):
                     qtd_feitas = len([x for x in feitas_str.split(',') if x.strip()])
                 else:
                     qtd_feitas = 0
-                    
+                
                 cadastradas[str(row['Letra']).strip()] = (total, qtd_feitas)
 
         bloqueadas = regras_exclusao.get(site_atual, [])
@@ -137,9 +145,7 @@ def exibir_resumo_geral(site_atual, regras_exclusao):
             height=300
         )
     except Exception as e:
-        # AQUI VAI MOSTRAR O ERRO REAL AGORA
-        st.error(f"Erro detalhado no resumo geral: {e}")
-
+        st.error(f"Erro visual: {e}")
 # --- CORREÇÃO AQUI: Adicionei 'usuario_nome' na definição ---
 def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
     try:
@@ -614,6 +620,7 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
