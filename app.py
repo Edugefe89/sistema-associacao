@@ -345,8 +345,8 @@ with st.sidebar:
     
     st.metric("⏱ Tempo", t)
     c_pag, c_prod = st.columns(2)
-    c_pag.metric("📄 Pags", p)
-    c_prod.metric("📦 Prods", prod)
+    c_pag.metric("📄 Páginas", p)
+    c_prod.metric("📦 Produtos", prod)
     
     if st.button("Atualizar Métricas"):
         with st.spinner("Recalculando..."):
@@ -418,7 +418,7 @@ else:
     st.warning("🆕 Configuração Inicial")
     col_a, col_b = st.columns(2)
     with col_a: tot_pg = st.number_input("Total Páginas:", 1, step=1)
-    with col_b: qtd_ultima_input = st.number_input(f"Prods na Pág {tot_pg}:", 1, 100, 100)
+    with col_b: qtd_ultima_input = st.number_input(f"Produtos na Pág {tot_pg}:", 1, 100, 100)
     qtd_ultima = qtd_ultima_input
 
 st.divider()
@@ -558,8 +558,8 @@ if tot_pg is not None:
         df_editado = st.data_editor(
             df_mapa,
             column_config={
-                "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
-                "Status": st.column_config.TextColumn("Est.", disabled=True, width="small"),
+                "Pág": st.column_config.NumberColumn("Página", disabled=True, format="%d", width="small"),
+                "Status": st.column_config.TextColumn("Status", disabled=True, width="small"),
                 "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
                 "bloqueado": None
             },
@@ -615,3 +615,4 @@ if tot_pg is not None:
         st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
