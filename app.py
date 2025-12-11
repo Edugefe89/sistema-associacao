@@ -513,49 +513,43 @@ if tot_pg is not None:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
 
-        # 1. CONFIGURAÇÃO E LEITURA DO BANCO (Google Sheets)
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Define a chave única que identifica este trabalho
-        chave_atual = f"{site} | {letra}" 
-
-        # LÊ a planilha 'acompanhamento_paginas'
-        # ttl=0 garante que não tenha cache (pega dados frescos)
+        # 1. CONEXÃO ROBUSTA (A mesma que já funciona no resto do app)
         try:
-            df_bd = conn.read(worksheet="acompanhamento_paginas", ttl=5)
+            client = get_client_google()
+            # Abre a planilha e a aba específica
+            sheet_acompanhamento = client.open("Sistema_Associacao").worksheet("acompanhamento_paginas")
             
-            # Garante que as colunas existem para evitar erro de Key Error se a planilha estiver vazia
-            colunas_esperadas = ["chave", "letra", "pagina", "status"]
-            if not all(col in df_bd.columns for col in colunas_esperadas):
-                 df_bd = pd.DataFrame(columns=colunas_esperadas)
+            # Pega todos os dados para ler
+            dados_bd = sheet_acompanhamento.get_all_records()
+            df_bd = pd.DataFrame(dados_bd)
+            
+            # Define a chave atual
+            chave_atual = f"{site} | {letra}"
 
-            # Filtra apenas o que é DESTE cliente e DESTA letra e está "Em andamento"
-            filtro_bd = df_bd[
-                (df_bd["chave"] == chave_atual) & 
-                (df_bd["status"] == "Em andamento")
-            ]
-            paginas_em_andamento_bd = set(filtro_bd["pagina"].astype(int).tolist())
-            
-        except Exception as e:
-            # Se a aba não existir ou der erro grave, assumimos vazio para não travar o app
-            # st.error(f"Aviso: Criando conexão inicial. Detalhe: {e}") # Descomente se quiser ver o erro
+            # Filtra paginas em andamento deste cliente/letra
             paginas_em_andamento_bd = set()
-            df_bd = pd.DataFrame(columns=["chave", "letra", "pagina", "status"])
+            if not df_bd.empty and 'chave' in df_bd.columns and 'pagina' in df_bd.columns:
+                filtro = df_bd[
+                    (df_bd["chave"] == chave_atual) & 
+                    (df_bd["status"] == "Em andamento")
+                ]
+                paginas_em_andamento_bd = set(filtro["pagina"].astype(int).tolist())
 
-        # Prepara listas de comparação
-        set_feitas = set(feitas_pg) # Vindas do seu controle (Finalizadas)
-        
+        except Exception as e:
+            st.error(f"Erro ao ler aba acompanhamento: {e}")
+            paginas_em_andamento_bd = set()
+            df_bd = pd.DataFrame() # Vazio para não quebrar
+
         # 2. MONTAR OS DADOS VISUAIS
+        set_feitas = set(feitas_pg)
         dados_mapa = []
+        
         for i in range(1, tot_pg + 1):
             if i in set_feitas:
-                # CONCLUÍDO (Travado - Vem do Banco de Dados Principal)
                 dados_mapa.append({"Pág": i, "Status": "✅", "Selecionar": True, "bloqueado": True})
             elif i in paginas_em_andamento_bd:
-                # EM ANDAMENTO (Vindo do Sheets - Monitoramento Equipe)
                 dados_mapa.append({"Pág": i, "Status": "🟡", "Selecionar": True, "bloqueado": False})
             else:
-                # LIVRE
                 dados_mapa.append({"Pág": i, "Status": "", "Selecionar": False, "bloqueado": False})
 
         df_mapa = pd.DataFrame(dados_mapa)
@@ -573,57 +567,51 @@ if tot_pg is not None:
             hide_index=True,
             use_container_width=True,
             height=300,
-            key=f"editor_bd_{letra}"
+            key=f"editor_gspread_{letra}"
         )
 
-        # 4. LÓGICA DE GRAVAÇÃO NO SHEETS
-        # Identifica o estado final desejado pelo usuário
-        selecao_final_usuario = set(df_editado[
+        # 4. LÓGICA DE SALVAMENTO (USANDO GSPREAD DIRETO)
+        selecao_final = set(df_editado[
             (df_editado["Selecionar"] == True) & 
             (df_editado["bloqueado"] == False)
         ]["Pág"].tolist())
 
-        # Verifica se houve mudança em relação ao que veio do banco
-        if selecao_final_usuario != paginas_em_andamento_bd:
-            
-            # A) O que foi MARCADO agora (Novo) -> Adicionar no Sheets
-            novas = selecao_final_usuario - paginas_em_andamento_bd
-            for p in novas:
-                nova_linha = pd.DataFrame([{
-                    "chave": chave_atual,
-                    "letra": letra,
-                    "pagina": p,
-                    "status": "Em andamento"
-                }])
-                # pd.concat é a forma moderna de adicionar linhas
-                df_bd = pd.concat([df_bd, nova_linha], ignore_index=True)
-
-            # B) O que foi DESMARCADO agora -> Remover do Sheets
-            removidas = paginas_em_andamento_bd - selecao_final_usuario
-            if removidas:
-                # Remove as linhas que batem com a chave e a página removida
-                # A lógica é: Mantenha tudo que NÃO SEJA (chave atual E pagina removida)
-                df_bd = df_bd[~((df_bd["chave"] == chave_atual) & (df_bd["pagina"].isin(removidas)))]
-
-            # C) Atualiza a planilha INTEIRA com as mudanças
+        if selecao_final != paginas_em_andamento_bd:
             try:
-                conn.update(worksheet="acompanhamento_paginas", data=df_bd)
-                st.rerun() # Recarrega a tela para atualizar os ícones
-            except Exception as e:
-                st.error("Erro ao salvar. Verifique se o robô tem permissão de EDITOR na planilha.")
+                # A) ADICIONAR NOVAS (Simples: append_row)
+                novas = selecao_final - paginas_em_andamento_bd
+                for p in novas:
+                    sheet_acompanhamento.append_row([chave_atual, letra, int(p), "Em andamento"])
 
-        # Define a variável para uso no resto do código
-        sel_agora = list(selecao_final_usuario)
+                # B) REMOVER DESMARCADAS (Complexo: achar a linha e deletar)
+                removidas = paginas_em_andamento_bd - selecao_final
+                if removidas:
+                    # Recarrega dados frescos para garantir indices corretos
+                    dados_atuais = sheet_acompanhamento.get_all_records()
+                    
+                    # Procura de trás para frente para não bagunçar indices ao deletar
+                    # (Lógica: deletar linha X muda o número de todas abaixo dela)
+                    linhas_para_deletar = []
+                    for idx, row in enumerate(dados_atuais):
+                        # Verifica se é a linha certa (Chave igual e Pagina está na lista de removidas)
+                        if row['chave'] == chave_atual and int(row['pagina']) in removidas:
+                            linhas_para_deletar.append(idx + 2) # +2 porque get_all_records ignora header(1) e é 0-based
+
+                    # Deleta linha por linha (ordem decrescente)
+                    for l in sorted(linhas_para_deletar, reverse=True):
+                        sheet_acompanhamento.delete_row(l)
+
+                st.rerun()
+
+            except Exception as e:
+                # AGORA SIM VAMOS VER O ERRO REAL SE ACONTECER
+                st.error(f"Erro real ao salvar: {e}")
+
+        # Variavel para uso global
+        sel_agora = list(selecao_final)
 
     st.sidebar.divider()
     if sel_agora:
-        st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
+        st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
-
-
-
-
-
-
