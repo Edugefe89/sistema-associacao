@@ -522,7 +522,7 @@ if tot_pg is not None:
         # LÊ a planilha 'acompanhamento_paginas'
         # ttl=0 garante que não tenha cache (pega dados frescos)
         try:
-            df_bd = conn.read(worksheet="acompanhamento_paginas", ttl=0)
+            df_bd = conn.read(worksheet="acompanhamento_paginas", ttl=5)
             
             # Garante que as colunas existem para evitar erro de Key Error se a planilha estiver vazia
             colunas_esperadas = ["chave", "letra", "pagina", "status"]
@@ -620,6 +620,7 @@ if tot_pg is not None:
         st.sidebar.warning(f"Você pegou as páginas: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
 
 
 
