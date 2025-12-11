@@ -500,18 +500,23 @@ if tot_pg is not None:
         st.divider()
         st.markdown(f"### 🗺️ Mapa da Letra {letra}")
         dados_mapa = []
-        # Garante que sel_agora existe (foi iniciado lá em cima)
-        paginas_visuais = set(feitas_pg + sel_agora)
+        
+        # Garante que as listas sejam sets para verificação rápida
+        set_feitas = set(feitas_pg)
+        set_agora = set(sel_agora)
+
         for i in range(1, tot_pg + 1):
-            status_icon = "✅" if i in paginas_visuais else "⬜"
+            if i in set_feitas:
+                status_icon = "✅" # Finalizada (Banco de dados/Controle)
+            elif i in set_agora:
+                status_icon = "🟡" # Em andamento (Selecionada agora pelo estagiário)
+            else:
+                status_icon = "⬜" # Em branco
+
             dados_mapa.append({"Pág": i, "Status": status_icon})
-        st.dataframe(pd.DataFrame(dados_mapa), use_container_width=True, hide_index=True, height=150)
+            
+        st.dataframe(pd.DataFrame(dados_mapa), use_container_width=True, hide_index=True, height=250)
     
-    with st.sidebar:
-        st.divider()
-        exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
-
-
-
-
+    # Exibição do resumo fora do bloco anterior para organização
+    st.sidebar.divider()
+    exibir_resumo_geral(site, REGRAS_EXCLUSAO)
