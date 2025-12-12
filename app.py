@@ -564,8 +564,8 @@ if tot_pg is not None:
         df_editado = st.data_editor(
             df_mapa,
             column_config={
-                "Pág": st.column_config.NumberColumn("Pg", disabled=True, format="%d", width="small"),
-                "Status": st.column_config.TextColumn("Est.", disabled=True, width="small"),
+                "Pág": st.column_config.NumberColumn("Página", disabled=True, format="%d", width="small"),
+                "Status": st.column_config.TextColumn("Status", disabled=True, width="small"),
                 "Selecionar": st.column_config.CheckboxColumn("Trabalhar", default=False, width="small"),
                 "bloqueado": None
             },
@@ -619,3 +619,4 @@ if tot_pg is not None:
         st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
+
