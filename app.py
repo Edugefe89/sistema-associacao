@@ -347,7 +347,7 @@ with st.sidebar:
     
     t, p, prod = st.session_state['resumo_dia']
     
-    st.metric("⏱ Tempo", t)
+    # REMOVIDO: st.metric("⏱ Tempo", t)
     c_pag, c_prod = st.columns(2)
     c_pag.metric("📄 Páginas", p)
     c_prod.metric("📦 Produtos", prod)
@@ -619,4 +619,3 @@ if tot_pg is not None:
         st.sidebar.warning(f"Sua seleção: {sel_agora}")
         
     exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
