@@ -444,8 +444,6 @@ if tot_pg is not None:
              st.session_state['selecao_mapa_cache'] = list(paginas_em_andamento_bd)
 
         st.sidebar.divider()
-        exibir_resumo_geral(site, REGRAS_EXCLUSAO)
-
 # ==============================================================================
 # 7. FORMULÁRIO DE TRABALHO
 # ==============================================================================
@@ -540,3 +538,9 @@ elif st.session_state.status == "TRABALHANDO":
                     st.rerun()
             else:
                 st.warning(f"⚠️ Marque todas as páginas para finalizar.")
+
+# ==============================================================================
+# 8. RODAPÉ - VISÃO GERAL
+# ==============================================================================
+st.divider()
+exibir_resumo_geral(site, REGRAS_EXCLUSAO)
