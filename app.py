@@ -6,16 +6,18 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import uuid
 import pytz
-import extra_streamlit_components as stx
+import extra_streamlit_components as stx # <--- ESTE IMPORT É OBRIGATÓRIO AQUI
 
-# --- CÓDIGO DE EMERGÊNCIA (MODO NUCLEAR) ---
+# --- CÓDIGO DE EMERGÊNCIA
 if "sair" in st.query_params:
     st.title("🛑 Reset de Emergência")
     
-    # Tenta limpar tudo
-    cm_temp = get_manager()
-    cm_temp.delete("usuario_associacao")
-    cm_temp.delete("timer_inicio")
+    # CORREÇÃO: Usamos stx.CookieManager() direto, em vez da função get_manager()
+    try:
+        cm_temp = stx.CookieManager()
+        cm_temp.delete("usuario_associacao")
+        cm_temp.delete("timer_inicio")
+    except: pass
     
     # Limpa a sessão
     for key in list(st.session_state.keys()):
@@ -28,8 +30,7 @@ if "sair" in st.query_params:
         st.query_params.clear()
         st.rerun()
         
-    st.stop() # Para o código aqui. Não deixa carregar o resto.
-
+    st.stop()
 # ==============================================================================
 # 1. FUNÇÕES DE CONEXÃO E CACHE
 # ==============================================================================
@@ -689,4 +690,5 @@ elif st.session_state.status == "TRABALHANDO":
                     st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+
 
