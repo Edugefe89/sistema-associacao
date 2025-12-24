@@ -6,31 +6,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import uuid
 import pytz
-import extra_streamlit_components as stx # <--- ESTE IMPORT É OBRIGATÓRIO AQUI
 
-# --- CÓDIGO DE EMERGÊNCIA
-if "sair" in st.query_params:
-    st.title("🛑 Reset de Emergência")
-    
-    # CORREÇÃO: Usamos stx.CookieManager() direto, em vez da função get_manager()
-    try:
-        cm_temp = stx.CookieManager()
-        cm_temp.delete("usuario_associacao")
-        cm_temp.delete("timer_inicio")
-    except: pass
-    
-    # Limpa a sessão
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-        
-    st.warning("Cookies limpos. Clique no botão abaixo para voltar.")
-    
-    # Este botão força a limpeza da URL e recarrega LIMPO
-    if st.button("♻️ VOLTAR PARA O LOGIN (CLIQUE AQUI)"):
-        st.query_params.clear()
-        st.rerun()
-        
-    st.stop()
 # ==============================================================================
 # 1. FUNÇÕES DE CONEXÃO E CACHE
 # ==============================================================================
@@ -45,9 +21,6 @@ def get_client_google():
     except Exception as e:
         st.error(f"⚠️ Erro de Conexão: {e}")
         return None
-
-def get_manager():
-    return stx.CookieManager()
 
 def forcar_atualizacao_mapa():
     """Lê o banco de acompanhamento e salva na memória"""
@@ -155,7 +128,7 @@ def exibir_resumo_geral(site_atual, regras_exclusao):
     except Exception as e: st.error(f"Erro visual: {e}")
 
 # ==============================================================================
-# 2. FUNÇÕES DE LOG E SALVAMENTO
+# 2. FUNÇÕES DE LOG E SALVAMENTO (SEM COOKIES)
 # ==============================================================================
 
 def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_nome, qtd_ultima_pag=100):
@@ -180,7 +153,7 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_n
 
 def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
     try:
-        # 1. BLINDAGEM DE DADOS (Converte tudo para evitar erro de matemática)
+        # Blindagem de Tipos
         try:
             total_safe = int(float(str(total))) if total else 0
             qtd_ultima_safe = int(float(str(qtd_ultima_pag))) if qtd_ultima_pag else 100
@@ -191,35 +164,26 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
-        # 2. VERIFICAÇÃO DE DUPLICIDADE (Com proteção extra)
+        # Filtro de Duplicidade Simples
         try:
             todos_logs = sheet.get_all_records()
             df_log = pd.DataFrame(todos_logs)
-            
             if not df_log.empty and 'Operador' in df_log.columns and 'Acao' in df_log.columns:
-                # Filtra apenas logs desse usuário para evitar erro com dados de outros
                 logs_usuario = df_log[df_log['Operador'].astype(str) == str(operador)]
-                
                 if not logs_usuario.empty:
                     ultima_acao = logs_usuario.iloc[-1]['Acao']
-                    # Se a última ação for igual a atual, retorna True para não travar,
-                    # MAS permite que o fluxo do botão continue
-                    if str(acao) == str(ultima_acao) and acao != "PAUSA": 
-                        return True 
-        except Exception as e_pandas:
-            print(f"Erro na verificação de duplicidade (ignorando): {e_pandas}")
-            # Se der erro ao verificar duplicidade, segue o baile e registra o log igual.
+                    if str(acao) == str(ultima_acao) and acao != "PAUSA": return True 
+        except: pass
 
         fuso = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso)
         
         tempo = 0
         
-        # 3. CÁLCULO DE TEMPO
+        # Lógica de Tempo baseada APENAS na sessão atual (RAM)
         if acao in ["INICIO", "RETOMADA"]:
             st.session_state['ultimo_timestamp'] = agora
             tempo = 0
-            
         elif acao in ["PAUSA", "FIM"]:
             if 'ultimo_timestamp' in st.session_state and st.session_state['ultimo_timestamp']:
                 try:
@@ -227,14 +191,11 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
                     tempo = int(delta.total_seconds())
                 except: tempo = 0
             else:
-                tempo = 0
+                tempo = 0 # Se deu F5, perde o tempo da sessão atual, mas salva o progresso
 
         if 'id_sessao' not in st.session_state: st.session_state.id_sessao = str(uuid.uuid4())
         
-        # Formata lista de novas páginas
         str_novas = ", ".join(map(str, novas)) if novas else "-"
-        
-        # Cálculo de produtos seguro
         qtd_produtos = 0
         if novas:
             for p in novas:
@@ -249,15 +210,11 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
             agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
             tempo, str_novas, total_safe, qtd_produtos
         ]
-        
         sheet.append_row(nova_linha)
         return True
-
     except Exception as e: 
-        # AGORA VAI APARECER O ERRO NA TELA DA CAMILLY
-        st.error(f"⚠️ Erro Crítico no Log: {e}")
-        # Mesmo com erro, retornamos True para ela conseguir trabalhar
-        return True
+        st.error(f"Erro Log: {e}")
+        return True # Segue o jogo mesmo com erro
 
 def calcular_resumo_diario(usuario):
     try:
@@ -297,83 +254,49 @@ def calcular_resumo_diario(usuario):
             total_prod = pd.to_numeric(col_prod_limpa, errors='coerce').fillna(0).sum()
             
         return tempo_str, paginas, int(total_prod)
-    except Exception as e: 
+    except: 
         return "...", 0, 0
 
 # ==============================================================================
-# 3. LÓGICA DE LOGIN
+# 3. LÓGICA DE LOGIN (SIMPLES, SEM COOKIE)
 # ==============================================================================
 
-cookie_manager = get_manager()
-cookie_usuario = cookie_manager.get(cookie="usuario_associacao")
-
-if not cookie_usuario and not st.session_state.get('password_correct', False):
+if not st.session_state.get('password_correct', False):
     st.title("🔒 Acesso Restrito")
     try: usuarios = st.secrets["passwords"]
     except: st.error("Configure os Secrets."); st.stop()
+    
     col1, col2 = st.columns([2,1])
     with col1:
         user_input = st.selectbox("Usuário", ["Selecione..."] + list(usuarios.keys()))
         pass_input = st.text_input("Senha", type="password")
         if st.button("Entrar", type="primary"):
-            with st.spinner("Autenticando..."):
-                if user_input != "Selecione..." and pass_input == usuarios[user_input]:
-                    st.session_state['password_correct'] = True
-                    st.session_state['usuario_logado'] = user_input
-                    cookie_manager.set("usuario_associacao", user_input, expires_at=datetime.now() + timedelta(days=1))
-                    time.sleep(1)
-                    st.rerun()
-                else: st.error("Dados incorretos.")
+            if user_input != "Selecione..." and pass_input == usuarios[user_input]:
+                st.session_state['password_correct'] = True
+                st.session_state['usuario_logado'] = user_input
+                st.rerun()
+            else: st.error("Dados incorretos.")
     st.stop()
-
-if cookie_usuario:
-    st.session_state['usuario_logado'] = cookie_usuario
 
 usuario = st.session_state['usuario_logado'].title()
 
-# Recuperação de Sessão (Timer)
+# Inicializa Status se não existir
 if 'status' not in st.session_state:
-    cookie_timer = cookie_manager.get(cookie="timer_inicio")
-    
-    if cookie_timer:
-        try:
-            fuso = pytz.timezone('America/Sao_Paulo')
-            timestamp_recuperado = datetime.fromisoformat(cookie_timer)
-            agora = datetime.now(fuso)
-            horas_passadas = (agora - timestamp_recuperado).total_seconds() / 3600
-            
-            if horas_passadas < 12:
-                st.session_state['status'] = "TRABALHANDO"
-                st.session_state['ultimo_timestamp'] = timestamp_recuperado
-                st.toast(f"🔄 Sessão recuperada! Iniciada às {timestamp_recuperado.strftime('%H:%M')}")
-            else:
-                cookie_manager.delete("timer_inicio")
-                st.session_state['status'] = "PARADO"
-        except:
-            st.session_state['status'] = "PARADO"
-    else:
-        st.session_state['status'] = "PARADO"
+    st.session_state['status'] = "PARADO"
 
 # ==============================================================================
-# 4. SIDEBAR - MÉTRICAS E MENU
+# 4. SIDEBAR
 # ==============================================================================
 with st.sidebar:
     st.write(f"👤 **{usuario}**")
     if st.button("Sair / Logout"):
-        with st.spinner("Desconectando..."):
-            try: 
-                cookie_manager.delete("usuario_associacao")
-                cookie_manager.delete("timer_inicio") 
-                cookie_manager.set("usuario_associacao", "", expires_at=datetime.now())
-            except: pass
-            for k in list(st.session_state.keys()): del st.session_state[k]
-            time.sleep(2); st.rerun()
+        for k in list(st.session_state.keys()): del st.session_state[k]
+        st.rerun()
 
     st.divider()
     st.markdown("### 📊 Produção Hoje")
     if 'resumo_dia' not in st.session_state:
-        with st.spinner("Calculando..."):
-            st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
     
     t, p, prod = st.session_state['resumo_dia']
     c_pag, c_prod = st.columns(2)
@@ -381,17 +304,15 @@ with st.sidebar:
     c_prod.metric("📦 Produtos", prod)
     
     if st.button("Atualizar Métricas"):
-        with st.spinner("Recalculando..."):
-            st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
-            st.rerun()
+        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario)
+        st.rerun()
     st.divider()
     if st.button("🔄 Atualizar Lista Sites"):
-        with st.spinner("Baixando sites..."):
-            carregar_lista_sites_v2.clear()
-            st.rerun()
+        carregar_lista_sites_v2.clear()
+        st.rerun()
 
 # ==============================================================================
-# 5. SISTEMA PRINCIPAL - HEADER
+# 5. HEADER E SELEÇÃO
 # ==============================================================================
 st.title("🔗 Controle de Progresso")
 
@@ -400,21 +321,8 @@ with st.spinner("Carregando sistema..."):
     SITES = ["Selecione..."] + SITES_DO_BANCO
     LETRAS_PADRAO = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-# --- CORREÇÃO DO BLOQUEIO DE SITE ---
-# Verifica qual site está selecionado na memória do Streamlit
-valor_site_atual = st.session_state.get("Site / Projeto", "Selecione...")
-
-# Regra de Ouro: Só bloqueia SE o status for Trabalhando E o site NÃO for "Selecione..."
-if st.session_state.get('status') == "TRABALHANDO" and valor_site_atual != "Selecione...":
-    disabled_sel = True
-else:
-    # Se cair aqui, libera o botão!
-    disabled_sel = False
-    # E se o sistema achava que estava trabalhando, forçamos para PARADO para corrigir o bug
-    if st.session_state.get('status') == "TRABALHANDO":
-        st.session_state['status'] = "PARADO"
-
-# ------------------------------------
+# Bloqueia seleção APENAS se estiver trabalhando
+disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
 
 c1, c2 = st.columns(2)
 with c1: site = st.selectbox("Site / Projeto", SITES, disabled=disabled_sel)
@@ -430,14 +338,13 @@ with c2: letra = st.selectbox("Letra", letras_finais, disabled=disabled_sel)
 
 chave = f"{site}_{letra}"
 if st.session_state.get('last_sel') != chave and not disabled_sel:
-    with st.spinner("Carregando histórico e mapa..."):
+    with st.spinner("Carregando..."):
         tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
         st.session_state.mem_tot = tot
         st.session_state.mem_feit = feitas
         st.session_state.mem_ult = qtd_ult
         forcar_atualizacao_mapa()
         st.session_state['last_sel'] = chave
-        # Reseta seleção do mapa ao trocar de letra
         st.session_state['selecao_mapa_cache'] = []
 
 tot_pg = st.session_state.get('mem_tot')
@@ -452,7 +359,6 @@ if tot_pg:
     faltam = [p for p in todas if p not in feitas_pg]
     prog = len(feitas_pg)/tot_pg if tot_pg > 0 else 0
     st.progress(prog, f"{len(feitas_pg)}/{tot_pg} ({int(prog*100)}%)")
-    st.caption(f"ℹ️ Última página tem **{qtd_ultima}** produtos.")
     if not faltam: st.success("Letra Concluída!"); bloq_total = True
 else:
     st.warning("🆕 Configuração Inicial")
@@ -464,15 +370,14 @@ else:
 st.divider()
 
 # ==============================================================================
-# 6. SIDEBAR - MAPA INTERATIVO (MOVIDO PARA CIMA PARA FUNCIONAR LOGICA)
+# 6. SIDEBAR - MAPA (MOVIDO PARA CIMA)
 # ==============================================================================
-# A lógica do mapa precisa rodar ANTES do formulário para o 'selecao_mapa_cache' estar atualizado
 if tot_pg is not None:
     with st.sidebar:
         st.divider()
         c_mapa_titulo, c_mapa_refresh = st.columns([4,1])
         c_mapa_titulo.markdown(f"### 🗺️ Mapa {letra}")
-        if c_mapa_refresh.button("🔄", help="Atualizar mapa da equipe"):
+        if c_mapa_refresh.button("🔄"):
             forcar_atualizacao_mapa()
             st.rerun()
 
@@ -494,7 +399,6 @@ if tot_pg is not None:
 
         df_mapa = pd.DataFrame(dados_mapa)
         
-        # O Editor agora é apenas leitura/input visual
         df_editado = st.data_editor(
             df_mapa,
             column_config={
@@ -507,25 +411,18 @@ if tot_pg is not None:
             hide_index=True, use_container_width=True, height=300, key=f"editor_event_{letra}"
         )
 
-        # Lógica de salvar no banco e atualizar sessão
         selecao_final = set(df_editado[(df_editado["Selecionar"] == True) & (df_editado["bloqueado"] == False)]["Pág"].tolist())
 
-        # Se houver mudança visual, processa no banco
         if selecao_final != paginas_em_andamento_bd:
             try:
                 client = get_client_google()
                 sheet_acompanhamento = client.open("Sistema_Associacao").worksheet("acompanhamento_paginas")
                 
-                # 1. Adicionar Novas (Batch)
                 novas = selecao_final - paginas_em_andamento_bd
                 rows_to_add = []
-                for p in novas: 
-                    rows_to_add.append([chave_atual, letra, int(p), "Em andamento"])
-                
-                if rows_to_add:
-                    sheet_acompanhamento.append_rows(rows_to_add)
+                for p in novas: rows_to_add.append([chave_atual, letra, int(p), "Em andamento"])
+                if rows_to_add: sheet_acompanhamento.append_rows(rows_to_add)
 
-                # 2. Remover Antigas (Cuidado com Rate Limit)
                 removidas = paginas_em_andamento_bd - selecao_final
                 if removidas:
                     dados_atuais = sheet_acompanhamento.get_all_records()
@@ -533,94 +430,62 @@ if tot_pg is not None:
                     for idx, row in enumerate(dados_atuais):
                         if row['chave'] == chave_atual and int(row['pagina']) in removidas:
                             linhas_para_deletar.append(idx + 2)
-                    
-                    # CORREÇÃO CRÍTICA: Deleta de trás para frente e com pausa
                     for l in sorted(linhas_para_deletar, reverse=True):
                         try:
                             sheet_acompanhamento.delete_row(l)
-                            time.sleep(0.8) # Pausa para evitar API Error
+                            time.sleep(0.8)
                         except: pass
 
                 forcar_atualizacao_mapa()
-                st.session_state['selecao_mapa_cache'] = list(selecao_final) # Salva para o formulário usar
+                st.session_state['selecao_mapa_cache'] = list(selecao_final)
                 st.rerun()
             except Exception as e: st.error(f"Erro ao salvar seleção: {e}")
         else:
-             # Se não mudou, apenas garante que a sessão tenha o valor atual
              st.session_state['selecao_mapa_cache'] = list(paginas_em_andamento_bd)
 
         st.sidebar.divider()
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
 
 # ==============================================================================
-# 7. FORMULÁRIO DE TRABALHO (VERSÃO ANTI-TRAVAMENTO)
+# 7. FORMULÁRIO DE TRABALHO
 # ==============================================================================
 
 if st.session_state.status == "PARADO":
     if not bloq_total:
         c_btn = st.columns(3)
-        # Garante que feitas_pg seja uma lista para evitar erro visual
         feitas_safe = feitas_pg if isinstance(feitas_pg, list) else []
         txt_btn = "▶️ RETOMAR" if feitas_safe else "▶️ INICIAR"
         
-        # --- BOTÃO RETOMAR/INICIAR ---
         if c_btn[0].button(txt_btn, type="primary", use_container_width=True):
-            erro_identificado = None
+            erro_msg = ""
             try:
-                with st.spinner("Sincronizando com o banco..."):
-                    # 1. IGNORA A MEMÓRIA E BUSCA DADOS FRESCOS
-                    # Isso resolve o bug de "clicar e nada acontecer" se a memória estiver vazia
+                with st.spinner("Iniciando..."):
+                    # Força busca no banco para evitar erro de variável vazia
                     t_fresh, f_fresh, q_fresh = buscar_status_paginas(site, letra)
+                    val_tot = t_fresh if t_fresh else (tot_pg if tot_pg else 1)
+                    val_ult = q_fresh if q_fresh else (qtd_ultima if qtd_ultima else 100)
                     
-                    # Se o banco retornou vazio (None), usa valores padrão para não quebrar
-                    val_tot = t_fresh if t_fresh else 1
-                    val_ult = q_fresh if q_fresh else 100
-                    
-                    # Atualiza a memória da sessão AGORA
                     st.session_state.mem_tot = val_tot
                     st.session_state.mem_feit = f_fresh
                     st.session_state.mem_ult = val_ult
-                    
-                    # 2. LOGICA DE INÍCIO (SE NECESSÁRIO)
-                    # Se for a primeira vez (lista de feitas vazia), registra no controle
+
                     if not f_fresh: 
                         salvar_progresso(site, letra, val_tot, [], usuario, val_ult)
-                    
-                    # 3. REGISTRO DE LOG
+
                     acao_log = "RETOMADA" if f_fresh else "INICIO"
+                    registrar_log(usuario, site, letra, acao_log, val_tot, [], val_ult)
                     
-                    # Tenta registrar o log
-                    log_ok = registrar_log(usuario, site, letra, acao_log, val_tot, [], val_ult)
-                    
-                    if log_ok:
-                        # 4. ATUALIZA COOKIE E ESTADO
-                        fuso = pytz.timezone('America/Sao_Paulo')
-                        agora_iso = datetime.now(fuso).isoformat()
-                        
-                        # Define o cookie novamente para garantir
-                        cookie_manager.set("timer_inicio", agora_iso, expires_at=datetime.now() + timedelta(days=1))
-                        
-                        forcar_atualizacao_mapa()
-                        st.session_state.status = "TRABALHANDO"
-                        st.rerun()
-                    else:
-                        erro_identificado = "Falha ao gravar no Log. Tente novamente."
-
+                    forcar_atualizacao_mapa()
+                    st.session_state.status = "TRABALHANDO"
+                    st.rerun()
             except Exception as e:
-                erro_identificado = f"Erro técnico: {e}"
-
-            # Se algo deu errado, mostramos o erro VISÍVEL
-            if erro_identificado:
-                st.error(f"⚠️ {erro_identificado}")
-                st.warning("Dica: Tente atualizar a página (F5) e selecionar a letra novamente.")
-
+                st.error(f"Erro: {e}")
     else: st.info("Selecione outra letra.")
 
 elif st.session_state.status == "TRABALHANDO":
     
-    # Proteção: Se a memória estiver vazia mesmo no status trabalhando, recarrega
     if st.session_state.get('mem_tot') is None:
-         with st.spinner("Recuperando dados..."):
+         with st.spinner("Sincronizando..."):
              tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
              st.session_state.mem_tot = tot
              st.session_state.mem_feit = feitas
@@ -630,10 +495,8 @@ elif st.session_state.status == "TRABALHANDO":
     with st.form(key="form_trabalho", clear_on_submit=False):
         st.markdown("### 📝 Marque o que você concluiu:")
         
-        # Garante inteiros
         try: total_loop = int(st.session_state.mem_tot)
         except: total_loop = 1
-            
         todas_reload = list(range(1, total_loop+1))
         
         lista_feitas = st.session_state.mem_feit if isinstance(st.session_state.mem_feit, list) else []
@@ -649,21 +512,17 @@ elif st.session_state.status == "TRABALHANDO":
         submit_pause = c_form1.form_submit_button("⏸ PAUSAR (Sair)", use_container_width=True)
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
         
-        # Pega valores seguros da sessão
         tot_safe = st.session_state.mem_tot
         ult_safe = st.session_state.mem_ult
 
         if submit_pause:
             with st.spinner("Salvando..."): 
                 registrar_log(usuario, site, letra, "PAUSA", tot_safe, sel_agora, ult_safe)
-                
                 if sel_agora:
                     salvar_progresso(site, letra, tot_safe, sel_agora, usuario, ult_safe)
                     if isinstance(st.session_state.mem_feit, list):
                         st.session_state.mem_feit += sel_agora
                 
-                cookie_manager.delete("timer_inicio")
-                time.sleep(1) 
                 st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
                 st.session_state.status = "PARADO"
                 st.rerun()
@@ -674,14 +533,10 @@ elif st.session_state.status == "TRABALHANDO":
                     registrar_log(usuario, site, letra, "FIM", tot_safe, sel_agora, ult_safe)
                     salvar_progresso(site, letra, tot_safe, sel_agora, usuario, ult_safe)
                     
-                    cookie_manager.delete("timer_inicio")
-                    
-                    time.sleep(1) 
                     st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
-                    
                     st.session_state.status = "PARADO"
                     st.balloons()
                     time.sleep(1)
                     st.rerun()
             else:
-                st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+                st.warning(f"⚠️ Marque todas as páginas para finalizar.")
