@@ -392,7 +392,21 @@ with st.spinner("Carregando sistema..."):
     SITES = ["Selecione..."] + SITES_DO_BANCO
     LETRAS_PADRAO = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-disabled_sel = True if st.session_state.get('status') == "TRABALHANDO" else False
+# --- CORREÇÃO DO BLOQUEIO DE SITE ---
+# Verifica qual site está selecionado na memória do Streamlit
+valor_site_atual = st.session_state.get("Site / Projeto", "Selecione...")
+
+# Regra de Ouro: Só bloqueia SE o status for Trabalhando E o site NÃO for "Selecione..."
+if st.session_state.get('status') == "TRABALHANDO" and valor_site_atual != "Selecione...":
+    disabled_sel = True
+else:
+    # Se cair aqui, libera o botão!
+    disabled_sel = False
+    # E se o sistema achava que estava trabalhando, forçamos para PARADO para corrigir o bug
+    if st.session_state.get('status') == "TRABALHANDO":
+        st.session_state['status'] = "PARADO"
+
+# ------------------------------------
 
 c1, c2 = st.columns(2)
 with c1: site = st.selectbox("Site / Projeto", SITES, disabled=disabled_sel)
@@ -615,6 +629,7 @@ elif st.session_state.status == "TRABALHANDO":
                         st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+
 
 
 
