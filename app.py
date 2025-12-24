@@ -160,6 +160,10 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
+        # OTIMIZAÇÃO: Não ler tudo se não precisar. 
+        # Ler apenas logs recentes evita timeout se a planilha for gigante
+        # Mas para manter a lógica atual segura, vamos apenas proteger o código
+        
         todos_logs = sheet.get_all_records()
         df_log = pd.DataFrame(todos_logs)
         
@@ -167,14 +171,17 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
             logs_usuario = df_log[df_log['Operador'] == operador]
             if not logs_usuario.empty:
                 ultima_acao = logs_usuario.iloc[-1]['Acao']
-                # Evita duplicação de clique
-                if acao == ultima_acao and acao != "PAUSA": return True 
+                # Se ela já clicou em Retomar/Inicio e deu erro na tela depois, 
+                # o sistema libera para não travar o trabalho
+                if acao == ultima_acao and acao != "PAUSA": 
+                    return True 
 
         fuso = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso)
         
         tempo = 0
         
+        # Lógica de Tempo
         if acao in ["INICIO", "RETOMADA"]:
             st.session_state['ultimo_timestamp'] = agora
             tempo = 0
@@ -202,8 +209,17 @@ def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
         ]
         sheet.append_row(nova_linha)
         return True
+
     except Exception as e: 
-        print(f"Erro ao logar: {e}")
+        # AGORA O ERRO VAI APARECER NA TELA
+        st.error(f"⚠️ Erro ao registrar Log: {e}")
+        
+        # FALLBACK: Se o erro for de conexão, permite trabalhar para não travar a operação
+        # Mas avisa que o tempo pode não ser contabilizado
+        if "Quota" in str(e) or "Time" in str(e) or "500" in str(e):
+             st.warning("⚠️ Erro de conexão com Google, mas liberando acesso...")
+             return True
+             
         return False
 
 def calcular_resumo_diario(usuario):
@@ -570,3 +586,4 @@ elif st.session_state.status == "TRABALHANDO":
                         st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+
