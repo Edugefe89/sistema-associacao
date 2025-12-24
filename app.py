@@ -157,70 +157,84 @@ def salvar_progresso(site, letra, total_paginas, novas_paginas_feitas, usuario_n
 
 def registrar_log(operador, site, letra, acao, total, novas, qtd_ultima_pag):
     try:
+        # 1. BLINDAGEM DE DADOS (Converte tudo para evitar erro de matemática)
+        try:
+            total_safe = int(float(str(total))) if total else 0
+            qtd_ultima_safe = int(float(str(qtd_ultima_pag))) if qtd_ultima_pag else 100
+        except:
+            total_safe = 0
+            qtd_ultima_safe = 100
+
         client = get_client_google()
         sheet = client.open("Sistema_Associacao").worksheet("Logs")
         
-        # OTIMIZAÇÃO: Não ler tudo se não precisar. 
-        # Ler apenas logs recentes evita timeout se a planilha for gigante
-        # Mas para manter a lógica atual segura, vamos apenas proteger o código
-        
-        todos_logs = sheet.get_all_records()
-        df_log = pd.DataFrame(todos_logs)
-        
-        if not df_log.empty and 'Operador' in df_log.columns and 'Acao' in df_log.columns:
-            logs_usuario = df_log[df_log['Operador'] == operador]
-            if not logs_usuario.empty:
-                ultima_acao = logs_usuario.iloc[-1]['Acao']
-                # Se ela já clicou em Retomar/Inicio e deu erro na tela depois, 
-                # o sistema libera para não travar o trabalho
-                if acao == ultima_acao and acao != "PAUSA": 
-                    return True 
+        # 2. VERIFICAÇÃO DE DUPLICIDADE (Com proteção extra)
+        try:
+            todos_logs = sheet.get_all_records()
+            df_log = pd.DataFrame(todos_logs)
+            
+            if not df_log.empty and 'Operador' in df_log.columns and 'Acao' in df_log.columns:
+                # Filtra apenas logs desse usuário para evitar erro com dados de outros
+                logs_usuario = df_log[df_log['Operador'].astype(str) == str(operador)]
+                
+                if not logs_usuario.empty:
+                    ultima_acao = logs_usuario.iloc[-1]['Acao']
+                    # Se a última ação for igual a atual, retorna True para não travar,
+                    # MAS permite que o fluxo do botão continue
+                    if str(acao) == str(ultima_acao) and acao != "PAUSA": 
+                        return True 
+        except Exception as e_pandas:
+            print(f"Erro na verificação de duplicidade (ignorando): {e_pandas}")
+            # Se der erro ao verificar duplicidade, segue o baile e registra o log igual.
 
         fuso = pytz.timezone('America/Sao_Paulo')
         agora = datetime.now(fuso)
         
         tempo = 0
         
-        # Lógica de Tempo
+        # 3. CÁLCULO DE TEMPO
         if acao in ["INICIO", "RETOMADA"]:
             st.session_state['ultimo_timestamp'] = agora
             tempo = 0
             
         elif acao in ["PAUSA", "FIM"]:
-            if 'ultimo_timestamp' in st.session_state:
-                delta = agora - st.session_state['ultimo_timestamp']
-                tempo = int(delta.total_seconds())
+            if 'ultimo_timestamp' in st.session_state and st.session_state['ultimo_timestamp']:
+                try:
+                    delta = agora - st.session_state['ultimo_timestamp']
+                    tempo = int(delta.total_seconds())
+                except: tempo = 0
             else:
                 tempo = 0
 
         if 'id_sessao' not in st.session_state: st.session_state.id_sessao = str(uuid.uuid4())
         
+        # Formata lista de novas páginas
         str_novas = ", ".join(map(str, novas)) if novas else "-"
+        
+        # Cálculo de produtos seguro
         qtd_produtos = 0
         if novas:
             for p in novas:
-                if p == int(total): qtd_produtos += int(qtd_ultima_pag)
-                else: qtd_produtos += 100
+                try:
+                    p_int = int(float(str(p)))
+                    if p_int == total_safe: qtd_produtos += qtd_ultima_safe
+                    else: qtd_produtos += 100
+                except: pass
         
         nova_linha = [
-            st.session_state.id_sessao, operador, site, letra, acao, 
+            st.session_state.id_sessao, str(operador), str(site), str(letra), str(acao), 
             agora.strftime("%d/%m/%Y %H:%M:%S"), str(agora.timestamp()), 
-            tempo, str_novas, total, qtd_produtos
+            tempo, str_novas, total_safe, qtd_produtos
         ]
+        
         sheet.append_row(nova_linha)
         return True
 
     except Exception as e: 
-        # AGORA O ERRO VAI APARECER NA TELA
-        st.error(f"⚠️ Erro ao registrar Log: {e}")
-        
-        # FALLBACK: Se o erro for de conexão, permite trabalhar para não travar a operação
-        # Mas avisa que o tempo pode não ser contabilizado
-        if "Quota" in str(e) or "Time" in str(e) or "500" in str(e):
-             st.warning("⚠️ Erro de conexão com Google, mas liberando acesso...")
-             return True
-             
-        return False
+        # AGORA VAI APARECER O ERRO NA TELA DA CAMILLY
+        st.error(f"⚠️ Erro Crítico no Log: {e}")
+        # Mesmo com erro, retornamos True para ela conseguir trabalhar
+        return True
 
 def calcular_resumo_diario(usuario):
     try:
@@ -586,4 +600,5 @@ elif st.session_state.status == "TRABALHANDO":
                         st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+
 
