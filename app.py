@@ -8,20 +8,27 @@ import uuid
 import pytz
 import extra_streamlit_components as stx
 
-# Se o link tiver ?sair=true, a gente limpa tudo na força bruta
-params = st.query_params
-if "sair" in params:
-    st.query_params.clear() # Limpa a URL
+# --- CÓDIGO DE EMERGÊNCIA (MODO NUCLEAR) ---
+if "sair" in st.query_params:
+    st.title("🛑 Reset de Emergência")
+    
+    # Tenta limpar tudo
+    cm_temp = get_manager()
+    cm_temp.delete("usuario_associacao")
+    cm_temp.delete("timer_inicio")
+    
+    # Limpa a sessão
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    try:
-        # Tenta limpar cookies na força bruta
-        cm_temp = stx.CookieManager()
-        cm_temp.delete("usuario_associacao")
-        cm_temp.delete("timer_inicio")
-    except: pass
-    st.error("🛑 Sessão Resetada. Recarregue a página (F5) para logar novamente.")
-    st.stop()
+        
+    st.warning("Cookies limpos. Clique no botão abaixo para voltar.")
+    
+    # Este botão força a limpeza da URL e recarrega LIMPO
+    if st.button("♻️ VOLTAR PARA O LOGIN (CLIQUE AQUI)"):
+        st.query_params.clear()
+        st.rerun()
+        
+    st.stop() # Para o código aqui. Não deixa carregar o resto.
 
 # ==============================================================================
 # 1. FUNÇÕES DE CONEXÃO E CACHE
@@ -682,3 +689,4 @@ elif st.session_state.status == "TRABALHANDO":
                     st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
+
