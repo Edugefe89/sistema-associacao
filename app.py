@@ -553,78 +553,74 @@ if tot_pg is not None:
         exibir_resumo_geral(site, REGRAS_EXCLUSAO)
 
 # ==============================================================================
-# 7. FORMULÁRIO DE TRABALHO
+# 7. FORMULÁRIO DE TRABALHO (VERSÃO ANTI-TRAVAMENTO)
 # ==============================================================================
 
 if st.session_state.status == "PARADO":
     if not bloq_total:
         c_btn = st.columns(3)
-        # Verifica se 'feitas_pg' é válida, senão assume lista vazia
+        # Garante que feitas_pg seja uma lista para evitar erro visual
         feitas_safe = feitas_pg if isinstance(feitas_pg, list) else []
         txt_btn = "▶️ RETOMAR" if feitas_safe else "▶️ INICIAR"
         
-        # --- LÓGICA DO BOTÃO INICIAR/RETOMAR ---
+        # --- BOTÃO RETOMAR/INICIAR ---
         if c_btn[0].button(txt_btn, type="primary", use_container_width=True):
+            erro_identificado = None
             try:
-                with st.spinner("Iniciando..."):
-                    # 1. RECUPERAÇÃO DE EMERGÊNCIA (Caso tenha dado F5 e perdido a memória)
-                    # Se tot_pg (mem_tot) for None ou 0, busca no banco AGORA.
-                    val_tot = st.session_state.get('mem_tot')
-                    val_ult = st.session_state.get('mem_ult')
+                with st.spinner("Sincronizando com o banco..."):
+                    # 1. IGNORA A MEMÓRIA E BUSCA DADOS FRESCOS
+                    # Isso resolve o bug de "clicar e nada acontecer" se a memória estiver vazia
+                    t_fresh, f_fresh, q_fresh = buscar_status_paginas(site, letra)
                     
-                    if val_tot is None or val_tot == 0:
-                         t, f, q = buscar_status_paginas(site, letra)
-                         # Atualiza Sessão
-                         st.session_state.mem_tot = t if t else 1  # Evita divisão por zero
-                         st.session_state.mem_feit = f
-                         st.session_state.mem_ult = q if q else 100
-                         # Atualiza Variáveis Locais para uso imediato
-                         val_tot = st.session_state.mem_tot
-                         val_ult = st.session_state.mem_ult
+                    # Se o banco retornou vazio (None), usa valores padrão para não quebrar
+                    val_tot = t_fresh if t_fresh else 1
+                    val_ult = q_fresh if q_fresh else 100
                     
-                    # 2. GARANTIA DE CADASTRO
-                    # Se for início do zero, garante que a linha existe na planilha
-                    if not feitas_safe: 
+                    # Atualiza a memória da sessão AGORA
+                    st.session_state.mem_tot = val_tot
+                    st.session_state.mem_feit = f_fresh
+                    st.session_state.mem_ult = val_ult
+                    
+                    # 2. LOGICA DE INÍCIO (SE NECESSÁRIO)
+                    # Se for a primeira vez (lista de feitas vazia), registra no controle
+                    if not f_fresh: 
                         salvar_progresso(site, letra, val_tot, [], usuario, val_ult)
                     
-                    # 3. LOG (Com valores garantidos)
-                    acao_log = "RETOMADA" if feitas_safe else "INICIO"
+                    # 3. REGISTRO DE LOG
+                    acao_log = "RETOMADA" if f_fresh else "INICIO"
                     
-                    # Chama o log (que já está blindado na função registrar_log)
-                    registrar_log(usuario, site, letra, acao_log, val_tot, [], val_ult)
+                    # Tenta registrar o log
+                    log_ok = registrar_log(usuario, site, letra, acao_log, val_tot, [], val_ult)
                     
-                    # 4. ATUALIZA COOKIE E ESTADO
-                    fuso = pytz.timezone('America/Sao_Paulo')
-                    agora_iso = datetime.now(fuso).isoformat()
-                    # Força a criação do cookie de timer
-                    cookie_manager.set("timer_inicio", agora_iso, expires_at=datetime.now() + timedelta(days=1))
-                    
-                    forcar_atualizacao_mapa()
-                    st.session_state.status = "TRABALHANDO"
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Erro ao iniciar: {e}")
-                # Se der erro, tenta forçar o estado mesmo assim para não travar o usuário
-                st.session_state.status = "TRABALHANDO"
-                st.rerun()
+                    if log_ok:
+                        # 4. ATUALIZA COOKIE E ESTADO
+                        fuso = pytz.timezone('America/Sao_Paulo')
+                        agora_iso = datetime.now(fuso).isoformat()
+                        
+                        # Define o cookie novamente para garantir
+                        cookie_manager.set("timer_inicio", agora_iso, expires_at=datetime.now() + timedelta(days=1))
+                        
+                        forcar_atualizacao_mapa()
+                        st.session_state.status = "TRABALHANDO"
+                        st.rerun()
+                    else:
+                        erro_identificado = "Falha ao gravar no Log. Tente novamente."
 
-        # Botão de Emergência para Limpar Cookie Zumbi
-        st.markdown(f"""
-            <div style="text-align: right; font-size: 0.8em; margin-top: 10px;">
-                <a href="/?sair=true" target="_self" style="color: #ff4b4b; text-decoration: none;">
-                    ⚠️ Clique aqui se o botão travar
-                </a>
-            </div>
-        """, unsafe_allow_html=True)
-            
+            except Exception as e:
+                erro_identificado = f"Erro técnico: {e}"
+
+            # Se algo deu errado, mostramos o erro VISÍVEL
+            if erro_identificado:
+                st.error(f"⚠️ {erro_identificado}")
+                st.warning("Dica: Tente atualizar a página (F5) e selecionar a letra novamente.")
+
     else: st.info("Selecione outra letra.")
 
 elif st.session_state.status == "TRABALHANDO":
     
-    # Proteção: Se chegou aqui mas não tem dados na memória, busca de novo
+    # Proteção: Se a memória estiver vazia mesmo no status trabalhando, recarrega
     if st.session_state.get('mem_tot') is None:
-         with st.spinner("Recarregando dados..."):
+         with st.spinner("Recuperando dados..."):
              tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
              st.session_state.mem_tot = tot
              st.session_state.mem_feit = feitas
@@ -634,13 +630,12 @@ elif st.session_state.status == "TRABALHANDO":
     with st.form(key="form_trabalho", clear_on_submit=False):
         st.markdown("### 📝 Marque o que você concluiu:")
         
-        # Garante que mem_tot seja inteiro
+        # Garante inteiros
         try: total_loop = int(st.session_state.mem_tot)
         except: total_loop = 1
             
         todas_reload = list(range(1, total_loop+1))
         
-        # Garante que mem_feit seja lista
         lista_feitas = st.session_state.mem_feit if isinstance(st.session_state.mem_feit, list) else []
         faltam_reload = [p for p in todas_reload if p not in lista_feitas]
         
@@ -653,13 +648,13 @@ elif st.session_state.status == "TRABALHANDO":
         c_form1, c_form2 = st.columns(2)
         submit_pause = c_form1.form_submit_button("⏸ PAUSAR (Sair)", use_container_width=True)
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
-
-        # Variáveis locais para usar no log (evita erro de None)
+        
+        # Pega valores seguros da sessão
         tot_safe = st.session_state.mem_tot
         ult_safe = st.session_state.mem_ult
 
         if submit_pause:
-            with st.spinner("Salvando e calculando..."): 
+            with st.spinner("Salvando..."): 
                 registrar_log(usuario, site, letra, "PAUSA", tot_safe, sel_agora, ult_safe)
                 
                 if sel_agora:
@@ -675,7 +670,7 @@ elif st.session_state.status == "TRABALHANDO":
         
         if submit_finish:
             if faltam_reload and len(sel_agora) == len(faltam_reload):
-                with st.spinner("Finalizando e calculando..."):
+                with st.spinner("Finalizando..."):
                     registrar_log(usuario, site, letra, "FIM", tot_safe, sel_agora, ult_safe)
                     salvar_progresso(site, letra, tot_safe, sel_agora, usuario, ult_safe)
                     
@@ -690,5 +685,3 @@ elif st.session_state.status == "TRABALHANDO":
                     st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
-
-
