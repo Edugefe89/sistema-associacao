@@ -551,43 +551,92 @@ if tot_pg is not None:
 if st.session_state.status == "PARADO":
     if not bloq_total:
         c_btn = st.columns(3)
-        txt_btn = "▶️ RETOMAR" if feitas_pg else "▶️ INICIAR"
+        # Verifica se 'feitas_pg' é válida, senão assume lista vazia
+        feitas_safe = feitas_pg if isinstance(feitas_pg, list) else []
+        txt_btn = "▶️ RETOMAR" if feitas_safe else "▶️ INICIAR"
         
+        # --- LÓGICA DO BOTÃO INICIAR/RETOMAR ---
         if c_btn[0].button(txt_btn, type="primary", use_container_width=True):
-            with st.spinner("Iniciando..."):
-                if st.session_state.get('mem_tot') is None:
-                    salvar_progresso(site, letra, tot_pg, [], usuario, qtd_ultima)
-                    st.session_state.mem_tot = tot_pg
-                    st.session_state.mem_ult = qtd_ultima
-                
-                acao_log = "RETOMADA" if feitas_pg else "INICIO"
-                if registrar_log(usuario, site, letra, acao_log, tot_pg, [], qtd_ultima):
+            try:
+                with st.spinner("Iniciando..."):
+                    # 1. RECUPERAÇÃO DE EMERGÊNCIA (Caso tenha dado F5 e perdido a memória)
+                    # Se tot_pg (mem_tot) for None ou 0, busca no banco AGORA.
+                    val_tot = st.session_state.get('mem_tot')
+                    val_ult = st.session_state.get('mem_ult')
+                    
+                    if val_tot is None or val_tot == 0:
+                         t, f, q = buscar_status_paginas(site, letra)
+                         # Atualiza Sessão
+                         st.session_state.mem_tot = t if t else 1  # Evita divisão por zero
+                         st.session_state.mem_feit = f
+                         st.session_state.mem_ult = q if q else 100
+                         # Atualiza Variáveis Locais para uso imediato
+                         val_tot = st.session_state.mem_tot
+                         val_ult = st.session_state.mem_ult
+                    
+                    # 2. GARANTIA DE CADASTRO
+                    # Se for início do zero, garante que a linha existe na planilha
+                    if not feitas_safe: 
+                        salvar_progresso(site, letra, val_tot, [], usuario, val_ult)
+                    
+                    # 3. LOG (Com valores garantidos)
+                    acao_log = "RETOMADA" if feitas_safe else "INICIO"
+                    
+                    # Chama o log (que já está blindado na função registrar_log)
+                    registrar_log(usuario, site, letra, acao_log, val_tot, [], val_ult)
+                    
+                    # 4. ATUALIZA COOKIE E ESTADO
                     fuso = pytz.timezone('America/Sao_Paulo')
                     agora_iso = datetime.now(fuso).isoformat()
+                    # Força a criação do cookie de timer
                     cookie_manager.set("timer_inicio", agora_iso, expires_at=datetime.now() + timedelta(days=1))
                     
                     forcar_atualizacao_mapa()
                     st.session_state.status = "TRABALHANDO"
                     st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Erro ao iniciar: {e}")
+                # Se der erro, tenta forçar o estado mesmo assim para não travar o usuário
+                st.session_state.status = "TRABALHANDO"
+                st.rerun()
+
+        # Botão de Emergência para Limpar Cookie Zumbi
+        st.markdown(f"""
+            <div style="text-align: right; font-size: 0.8em; margin-top: 10px;">
+                <a href="/?sair=true" target="_self" style="color: #ff4b4b; text-decoration: none;">
+                    ⚠️ Clique aqui se o botão travar
+                </a>
+            </div>
+        """, unsafe_allow_html=True)
+            
     else: st.info("Selecione outra letra.")
 
 elif st.session_state.status == "TRABALHANDO":
     
+    # Proteção: Se chegou aqui mas não tem dados na memória, busca de novo
     if st.session_state.get('mem_tot') is None:
-         tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
-         st.session_state.mem_tot = tot
-         st.session_state.mem_feit = feitas
-         st.session_state.mem_ult = qtd_ult
-         st.rerun()
+         with st.spinner("Recarregando dados..."):
+             tot, feitas, qtd_ult = buscar_status_paginas(site, letra)
+             st.session_state.mem_tot = tot
+             st.session_state.mem_feit = feitas
+             st.session_state.mem_ult = qtd_ult
+             st.rerun()
 
     with st.form(key="form_trabalho", clear_on_submit=False):
         st.markdown("### 📝 Marque o que você concluiu:")
-        todas_reload = list(range(1, st.session_state.mem_tot+1))
-        faltam_reload = [p for p in todas_reload if p not in st.session_state.mem_feit]
         
-        # AQUI ESTÁ A MÁGICA: Pega o que veio do mapa da sidebar como default
+        # Garante que mem_tot seja inteiro
+        try: total_loop = int(st.session_state.mem_tot)
+        except: total_loop = 1
+            
+        todas_reload = list(range(1, total_loop+1))
+        
+        # Garante que mem_feit seja lista
+        lista_feitas = st.session_state.mem_feit if isinstance(st.session_state.mem_feit, list) else []
+        faltam_reload = [p for p in todas_reload if p not in lista_feitas]
+        
         default_mapa = st.session_state.get('selecao_mapa_cache', [])
-        # Filtra para garantir que só sugerimos o que ainda falta fazer
         default_valido = [x for x in default_mapa if x in faltam_reload]
 
         sel_agora = st.multiselect("Selecione as páginas:", options=faltam_reload, default=default_valido)
@@ -597,39 +646,39 @@ elif st.session_state.status == "TRABALHANDO":
         submit_pause = c_form1.form_submit_button("⏸ PAUSAR (Sair)", use_container_width=True)
         submit_finish = c_form2.form_submit_button("✅ FINALIZAR", type="primary", use_container_width=True)
 
+        # Variáveis locais para usar no log (evita erro de None)
+        tot_safe = st.session_state.mem_tot
+        ult_safe = st.session_state.mem_ult
+
         if submit_pause:
             with st.spinner("Salvando e calculando..."): 
-                if registrar_log(usuario, site, letra, "PAUSA", tot_pg, sel_agora, qtd_ultima):
-                    if sel_agora:
-                        salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
+                registrar_log(usuario, site, letra, "PAUSA", tot_safe, sel_agora, ult_safe)
+                
+                if sel_agora:
+                    salvar_progresso(site, letra, tot_safe, sel_agora, usuario, ult_safe)
+                    if isinstance(st.session_state.mem_feit, list):
                         st.session_state.mem_feit += sel_agora
-                    
-                    cookie_manager.delete("timer_inicio")
-                    
-                    time.sleep(2) 
-                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
-                    st.session_state.status = "PARADO"
-                    st.rerun()
+                
+                cookie_manager.delete("timer_inicio")
+                time.sleep(1) 
+                st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
+                st.session_state.status = "PARADO"
+                st.rerun()
         
         if submit_finish:
             if faltam_reload and len(sel_agora) == len(faltam_reload):
                 with st.spinner("Finalizando e calculando..."):
-                    if registrar_log(usuario, site, letra, "FIM", tot_pg, sel_agora, qtd_ultima):
-                        salvar_progresso(site, letra, tot_pg, sel_agora, usuario, qtd_ultima)
-                        st.session_state.mem_feit += sel_agora
-                        
-                        cookie_manager.delete("timer_inicio")
-                        
-                        time.sleep(2) 
-                        st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
-                        
-                        st.session_state.status = "PARADO"
-                        st.balloons()
-                        time.sleep(1)
-                        st.rerun()
+                    registrar_log(usuario, site, letra, "FIM", tot_safe, sel_agora, ult_safe)
+                    salvar_progresso(site, letra, tot_safe, sel_agora, usuario, ult_safe)
+                    
+                    cookie_manager.delete("timer_inicio")
+                    
+                    time.sleep(1) 
+                    st.session_state['resumo_dia'] = calcular_resumo_diario(usuario) 
+                    
+                    st.session_state.status = "PARADO"
+                    st.balloons()
+                    time.sleep(1)
+                    st.rerun()
             else:
                 st.warning(f"⚠️ Você precisa marcar todas as páginas restantes para finalizar.")
-
-
-
-
